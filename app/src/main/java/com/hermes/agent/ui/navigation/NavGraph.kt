@@ -8,6 +8,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.hermes.agent.ui.agents.AgentsScreen
 import com.hermes.agent.ui.chat.ChatScreen
+import com.hermes.agent.ui.connections.ConnectionsScreen
 import com.hermes.agent.ui.conversations.ConversationsScreen
 import com.hermes.agent.ui.providers.AddEditProviderScreen
 import com.hermes.agent.ui.providers.ProvidersScreen
@@ -68,12 +69,17 @@ fun HermesNavGraph(navController: NavHostController) {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenToolLibrary = { navController.navigate(Routes.ToolLibrary.route) },
-                onOpenAgents = { navController.navigate(Routes.Agents.route) }
+                onOpenAgents = { navController.navigate(Routes.Agents.route) },
+                onOpenConnections = { navController.navigate(Routes.Connections.route) }
             )
         }
 
         composable(Routes.Agents.route) {
-            AgentsScreen(onBack = { navController.popBackStack() })
+            AgentsScreen(onBack = { navController.popBackStack() }, onOpenConnections = { navController.navigate(Routes.Connections.route) })
+        }
+
+        composable(Routes.Connections.route) {
+            ConnectionsScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Routes.ToolLibrary.route) {

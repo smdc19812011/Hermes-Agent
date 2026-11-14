@@ -24,11 +24,12 @@ import com.hermes.agent.domain.tools.Capability
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AgentsScreen(onBack: () -> Unit, vm: AgentsViewModel = hiltViewModel()) {
+fun AgentsScreen(onBack: () -> Unit, onOpenConnections: () -> Unit, vm: AgentsViewModel = hiltViewModel()) {
     val skills by vm.skills.collectAsStateWithLifecycle()
     val agents by vm.agents.collectAsStateWithLifecycle()
     val providers by vm.providers.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
+    val connectionNames = vm.connections.collectAsStateWithLifecycle().value.map { it.name }
 
     // null = closed; a blank item = new.
     var editSkill by remember { mutableStateOf<Skill?>(null) }
@@ -36,12 +37,12 @@ fun AgentsScreen(onBack: () -> Unit, vm: AgentsViewModel = hiltViewModel()) {
     var confirmDelete by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
 
     editSkill?.let { s ->
-        SkillEditor(s, error, onDismiss = { editSkill = null; vm.clearError() }) { saved ->
+        SkillEditor(s, connectionNames, error, onDismiss = { editSkill = null; vm.clearError() }) { saved ->
             vm.saveSkill(saved, s.name.ifBlank { null }) { editSkill = null }
         }
     }
     editAgent?.let { a ->
-        AgentEditor(a, providers.filter { it.isEnabled }, vm.toolNames, error, onDismiss = { editAgent = null; vm.clearError() }) { saved ->
+        AgentEditor(a, providers.filter { it.isEnabled }, vm.toolNames, connectionNames, error, onDismiss = { editAgent = null; vm.clearError() }) { saved ->
             vm.saveAgent(saved) { editAgent = null }
         }
     }
@@ -100,6 +101,11 @@ fun AgentsScreen(onBack: () -> Unit, vm: AgentsViewModel = hiltViewModel()) {
             OutlinedButton(onClick = { editAgent = AgentProfile(name = "") }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Add, null); Spacer(Modifier.width(8.dp)); Text("New agent")
             }
+
+            SectionTitle("Connections", "MCP servers and APIs whose tools skills and agents can switch on.")
+            OutlinedButton(onClick = onOpenConnections, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Extension, null); Spacer(Modifier.width(8.dp)); Text("Manage connections")
+            }
         }
     }
 }
@@ -155,19 +161,39 @@ private fun EditorScaffold(title: String, error: String?, canSave: Boolean, onDi
     }
 }
 
+/** Chips for picking connections by name; names that no longer exist stay listed so they can be removed. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SkillEditor(skill: Skill, error: String?, onDismiss: () -> Unit, onSave: (Skill) -> Unit) {
+private fun ConnectionPicker(title: String, help: String, available: List<String>, selected: List<String>, onChange: (List<String>) -> Unit) {
+    Text(title, style = MaterialTheme.typography.titleSmall)
+    Text(help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val all = (available + selected).distinctBy { it.lowercase() }
+    if (all.isEmpty()) Text("No connections yet. Add them under Settings → Connections.", style = MaterialTheme.typography.bodySmall)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        all.forEach { n ->
+            val on = selected.any { it.equals(n, true) }
+            FilterChip(selected = on, onClick = { onChange(if (on) selected.filterNot { it.equals(n, true) } else selected + n) },
+                label = { Text(if (available.any { it.equals(n, true) }) n else "$n (missing)") })
+        }
+    }
+}
+
+@Composable
+private fun SkillEditor(skill: Skill, connectionNames: List<String>, error: String?, onDismiss: () -> Unit, onSave: (Skill) -> Unit) {
     var name by remember { mutableStateOf(skill.name) }
+    var connections by remember { mutableStateOf(skill.connections) }
     var description by remember { mutableStateOf(skill.description) }
     var body by remember { mutableStateOf(skill.body) }
     EditorScaffold(if (skill.name.isBlank()) "New skill" else "Edit skill", error, name.isNotBlank() && body.isNotBlank(), onDismiss,
-        onSave = { onSave(Skill(name, description, body)) }) {
+        onSave = { onSave(Skill(name, description, body, connections)) }) {
         OutlinedTextField(name, { name = it }, label = { Text("Name") }, placeholder = { Text("find-adb-devices") }, singleLine = true,
             supportingText = { Text("Saved as lowercase words joined by hyphens") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(description, { description = it }, label = { Text("When to use it") },
             placeholder = { Text("Finding Android devices with ADB open on the local network") },
             supportingText = { Text("The AI sees only this line until it opens the skill") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(body, { body = it }, label = { Text("Instructions (markdown)") }, minLines = 10, modifier = Modifier.fillMaxWidth())
+        ConnectionPicker("Connections it uses", "Their tools switch on when the AI loads this skill, even if they're set to agents & skills only.",
+            connectionNames, connections) { connections = it }
     }
 }
 
@@ -177,6 +203,7 @@ private fun AgentEditor(
     agent: AgentProfile,
     providers: List<Provider>,
     toolNames: List<String>,
+    connectionNames: List<String>,
     error: String?,
     onDismiss: () -> Unit,
     onSave: (AgentProfile) -> Unit
@@ -188,6 +215,7 @@ private fun AgentEditor(
     var limitAccess by remember { mutableStateOf(agent.deviceAccess != null) }
     var access by remember { mutableStateOf(agent.deviceAccess ?: Capability.entries.toSet()) }
     var tools by remember { mutableStateOf(agent.tools.joinToString(", ")) }
+    var connections by remember { mutableStateOf(agent.connections) }
     var modelMenu by remember { mutableStateOf(false) }
 
     EditorScaffold(if (agent.name.isBlank()) "New agent" else "Edit agent", error, name.isNotBlank(), onDismiss, onSave = {
@@ -195,7 +223,8 @@ private fun AgentEditor(
             name = name, description = description.trim(), instructions = instructions.trim(),
             models = models.lines().map { it.trim() }.filter { it.isNotEmpty() },
             deviceAccess = if (limitAccess) access else null,
-            tools = tools.split(',', '\n').map { it.trim() }.filter { it.isNotEmpty() }
+            tools = tools.split(',', '\n').map { it.trim() }.filter { it.isNotEmpty() },
+            connections = connections
         ))
     }) {
         OutlinedTextField(name, { name = it }, label = { Text("Name") }, placeholder = { Text("Network scout") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -236,7 +265,8 @@ private fun AgentEditor(
 
         OutlinedTextField(tools, { tools = it }, label = { Text("Allowed tools (optional)") },
             supportingText = { Text("Comma-separated, e.g. scan_lan, port_scan, run_command. Empty = every tool its device access enables.") },
-            isError = tools.split(',', '\n').map { it.trim() }.any { it.isNotEmpty() && it !in toolNames },
+            isError = tools.split(',', '\n').map { it.trim() }.any { it.isNotEmpty() && it !in toolNames && "__" !in it },
             modifier = Modifier.fillMaxWidth())
+        ConnectionPicker("Connections", "This agent always gets these connections' tools.", connectionNames, connections) { connections = it }
     }
 }

@@ -26,6 +26,9 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -186,7 +189,15 @@ fun ChatScreen(
                 AnimatedVisibility(visible = state.notice != null) {
                     state.notice?.let { NoticeBar(it, onDismiss = vm::clearNotice) }
                 }
+                // Ticks while something is happening, so the avatar can tell typing from thinking and let an error fade.
+                val now by produceState(System.currentTimeMillis(), state.isLoading, state.failedAt) {
+                    while (state.isLoading || System.currentTimeMillis() - state.failedAt < 6_000) {
+                        value = System.currentTimeMillis(); kotlinx.coroutines.delay(400)
+                    }
+                    value = System.currentTimeMillis()
+                }
                 ChatInput(
+                    avatar = AvatarLogic.status(state.isLoading, state.tools, state.approval != null, now - state.lastTokenAt, now - state.failedAt),
                     value = inputText,
                     onValueChange = { inputText = it },
                     onSend = {
@@ -285,6 +296,7 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit) {
 
 @Composable
 private fun ChatInput(
+    avatar: AvatarStatus,
     value: String,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
@@ -300,6 +312,29 @@ private fun ChatInput(
     var menu by remember { mutableStateOf(false) }
     Surface(tonalElevation = 2.dp, shadowElevation = 8.dp) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding()) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(width = 45.dp, height = 35.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
+                        .padding(2.dp)
+                ) { HermesAvatar(avatar, Modifier.fillMaxSize()) }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    avatar.text,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = when (avatar.state) {
+                        AvatarState.IDLE -> MaterialTheme.colorScheme.onSurfaceVariant
+                        AvatarState.ERROR -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.primary
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite }
+                )
+            }
             if (pending.isNotEmpty() || importing) {
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 10.dp),

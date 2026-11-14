@@ -38,6 +38,7 @@ class SaveSkillTool @Inject constructor(private val library: AgentLibraryReposit
         "name" to prop("string", "Short name, e.g. find-adb-devices"),
         "description" to prop("string", "One line saying when to use it; this is what future chats see when choosing a skill"),
         "instructions" to prop("string", "The skill itself, in markdown: steps, commands, checks"),
+        "connections" to arrayProp("Optional names of connections (Settings → Connections) whose tools the skill needs; they switch on when it's loaded"),
         required = listOf("name", "description", "instructions")
     )
     override fun label(args: JsonObject) =
@@ -47,7 +48,8 @@ class SaveSkillTool @Inject constructor(private val library: AgentLibraryReposit
         val skill = library.saveSkill(Skill(
             name = args.string("name") ?: error("name is required"),
             description = args.string("description") ?: error("description is required"),
-            body = args.string("instructions") ?: error("instructions are required")
+            body = args.string("instructions") ?: error("instructions are required"),
+            connections = args.strings("connections")
         ))
         return "Saved skill ${skill.name}. Every chat with Skills & agents on can now load it with read_skill."
     }
@@ -68,6 +70,7 @@ class CreateAgentTool @Inject constructor(private val library: AgentLibraryRepos
         "device_access" to arrayProp("Optional device access it may use (never more than the user allows in Settings). Leave out for all allowed.",
             Capability.entries.map { it.name }),
         "tools" to arrayProp("Optional tool names it may use. Leave out for every tool its device access enables."),
+        "connections" to arrayProp("Optional names of connections (Settings → Connections) whose tools it always gets"),
         required = listOf("name", "instructions")
     )
     override fun label(args: JsonObject) = "${if (library.agentNamed(args.string("name").orEmpty()) != null) "Updating" else "Creating"} agent ${args.string("name")}"
@@ -85,6 +88,7 @@ class CreateAgentTool @Inject constructor(private val library: AgentLibraryRepos
             models = args.strings("models"),
             deviceAccess = access,
             tools = args.strings("tools"),
+            connections = args.strings("connections"),
             createdByAi = existing?.createdByAi ?: true
         ))
         return "${if (existing != null) "Updated" else "Created"} agent ${agent.name}. The user can start a chat with it from the new-chat button, " +

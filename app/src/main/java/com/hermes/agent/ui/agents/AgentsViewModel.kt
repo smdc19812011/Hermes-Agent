@@ -20,8 +20,10 @@ import javax.inject.Inject
 class AgentsViewModel @Inject constructor(
     private val library: AgentLibraryRepository,
     providerRepository: ProviderRepository,
-    toolRegistry: com.hermes.agent.data.tools.ToolRegistry
+    toolRegistry: com.hermes.agent.data.tools.ToolRegistry,
+    connectionRepository: com.hermes.agent.data.connections.ConnectionRepository
 ) : ViewModel() {
+    val connections: StateFlow<List<com.hermes.agent.data.connections.Connection>> = connectionRepository.connections
     val skills: StateFlow<List<Skill>> = library.skills
     val agents: StateFlow<List<AgentProfile>> = library.agents
     val providers: StateFlow<List<Provider>> = providerRepository.observeAll()

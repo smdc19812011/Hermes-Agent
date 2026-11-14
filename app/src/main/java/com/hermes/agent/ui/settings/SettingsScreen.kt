@@ -21,6 +21,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenToolLibrary: () -> Unit,
     onOpenAgents: () -> Unit,
+    onOpenConnections: () -> Unit,
     vm: SettingsViewModel = hiltViewModel()
 ) {
     val loaded by vm.settings.collectAsStateWithLifecycle()
@@ -63,6 +64,9 @@ fun SettingsScreen(
             }
             OutlinedButton(onClick = onOpenAgents, modifier = Modifier.fillMaxWidth()) {
                 Text("Skills & agents")
+            }
+            OutlinedButton(onClick = onOpenConnections, modifier = Modifier.fillMaxWidth()) {
+                Text("Connections: MCP servers & APIs")
             }
 
             SectionHeader("Media")

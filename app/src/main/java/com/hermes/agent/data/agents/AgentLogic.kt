@@ -18,12 +18,15 @@ object SkillFormat {
             val i = line.indexOf(':').takeIf { it > 0 } ?: return@mapNotNull null
             line.substring(0, i).trim() to line.substring(i + 1).trim().removeSurrounding("\"").removeSurrounding("'")
         }.toMap()
-        return Skill(meta["name"]?.ifBlank { null } ?: fallbackName, meta["description"].orEmpty(), lines.drop(end + 1).joinToString("\n").trim())
+        val connections = meta["connections"].orEmpty().trim().removePrefix("[").removeSuffix("]")
+            .split(',').map { it.trim().removeSurrounding("\"").removeSurrounding("'") }.filter { it.isNotEmpty() }
+        return Skill(meta["name"]?.ifBlank { null } ?: fallbackName, meta["description"].orEmpty(), lines.drop(end + 1).joinToString("\n").trim(), connections)
     }
 
     fun render(skill: Skill): String {
         val description = skill.description.replace('\n', ' ').trim()
-        return "---\nname: ${slug(skill.name)}\ndescription: ${if (description.contains(": ") || description.startsWith("\"")) "\"${description.replace("\"", "'")}\"" else description}\n---\n\n${skill.body.trim()}\n"
+        val connections = skill.connections.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "connections: [", postfix = "]\n") { "\"${it.replace("\"", "")}\"" }.orEmpty()
+        return "---\nname: ${slug(skill.name)}\ndescription: ${if (description.contains(": ") || description.startsWith("\"")) "\"${description.replace("\"", "'")}\"" else description}\n$connections---\n\n${skill.body.trim()}\n"
     }
 }
 

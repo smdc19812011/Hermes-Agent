@@ -21,6 +21,8 @@ data class AgentProfile(
     val deviceAccess: Set<Capability>? = null,
     /** Tool names this agent may use; empty = every tool its device access enables. */
     val tools: List<String> = emptyList(),
+    /** Names of connections whose tools this agent always gets, whatever their scope. */
+    val connections: List<String> = emptyList(),
     val createdByAi: Boolean = false
 ) {
     fun toJson(): String = JsonObject().apply {
@@ -31,6 +33,7 @@ data class AgentProfile(
         add("models", JsonArray().apply { models.forEach { add(it) } })
         deviceAccess?.let { caps -> add("deviceAccess", JsonArray().apply { caps.forEach { add(it.name) } }) }
         add("tools", JsonArray().apply { tools.forEach { add(it) } })
+        add("connections", JsonArray().apply { connections.forEach { add(it) } })
         addProperty("createdByAi", createdByAi)
     }.toString()
 
@@ -46,6 +49,7 @@ data class AgentProfile(
                 models = list("models"),
                 deviceAccess = o.getAsJsonArray("deviceAccess")?.let { list("deviceAccess").mapNotNull { n -> Capability.entries.firstOrNull { it.name == n } }.toSet() },
                 tools = list("tools"),
+                connections = list("connections"),
                 createdByAi = o.get("createdByAi")?.asBoolean ?: false
             )
         }.getOrNull()
@@ -53,4 +57,10 @@ data class AgentProfile(
 }
 
 /** A skill: reusable instructions in Hermes' SKILL.md format (YAML front matter with name and description, then markdown). */
-data class Skill(val name: String, val description: String, val body: String)
+data class Skill(
+    val name: String,
+    val description: String,
+    val body: String,
+    /** Names of connections whose tools switch on once this skill is loaded. */
+    val connections: List<String> = emptyList()
+)

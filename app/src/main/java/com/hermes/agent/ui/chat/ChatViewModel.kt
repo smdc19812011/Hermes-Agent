@@ -39,7 +39,10 @@ data class ChatUiState(
     /** Files picked with + and not sent yet. */
     val pending: List<Attachment> = emptyList(),
     val importing: Boolean = false,
-    val termuxReady: Boolean = false
+    val termuxReady: Boolean = false,
+    /** When the last token arrived and the last reply failed, for the avatar. */
+    val lastTokenAt: Long = 0,
+    val failedAt: Long = 0
 )
 
 @HiltViewModel
@@ -95,7 +98,7 @@ class ChatViewModel @Inject constructor(
 
         sendJob = viewModelScope.launch {
             sendMessageUseCase(conversation, input.trim(), history, files)
-                .catch { e -> _state.update { it.copy(notice = e.message ?: "Request failed") } }
+                .catch { e -> _state.update { it.copy(notice = e.message ?: "Request failed", failedAt = System.currentTimeMillis()) } }
                 .onCompletion {
                     _state.update { it.copy(isLoading = false, streamingContent = "", tools = emptyList(), approval = null, streamingFiles = emptyList()) }
                 }
@@ -110,7 +113,7 @@ class ChatViewModel @Inject constructor(
                             )
                         }
                         is StreamChunk.Token -> _state.update {
-                            it.copy(streamingContent = it.streamingContent + chunk.text)
+                            it.copy(streamingContent = it.streamingContent + chunk.text, lastTokenAt = System.currentTimeMillis())
                         }
                         is StreamChunk.Tool -> _state.update { s ->
                             val a = chunk.activity
@@ -126,7 +129,7 @@ class ChatViewModel @Inject constructor(
                         is StreamChunk.ProviderFailed -> _state.update {
                             it.copy(notice = "${chunk.providerName} failed: ${chunk.message}")
                         }
-                        is StreamChunk.Failed -> _state.update { it.copy(notice = chunk.message) }
+                        is StreamChunk.Failed -> _state.update { it.copy(notice = chunk.message, failedAt = System.currentTimeMillis()) }
                         is StreamChunk.Notice -> _state.update { it.copy(notice = chunk.message) }
                         is StreamChunk.File -> _state.update { it.copy(streamingFiles = it.streamingFiles + chunk.attachment) }
                         StreamChunk.Done -> Unit

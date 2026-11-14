@@ -38,7 +38,8 @@ class SendMessageUseCase @Inject constructor(
     private val attachmentStore: com.hermes.agent.data.media.AttachmentStore,
     private val mediaReader: com.hermes.agent.data.media.MediaReader,
     private val modelCatalog: com.hermes.agent.data.repository.ModelCatalogRepository,
-    private val agentLibrary: com.hermes.agent.data.agents.AgentLibraryRepository
+    private val agentLibrary: com.hermes.agent.data.agents.AgentLibraryRepository,
+    private val connectionRepository: com.hermes.agent.data.connections.ConnectionRepository
 ) {
     operator fun invoke(
         conversation: Conversation,
@@ -160,7 +161,10 @@ class SendMessageUseCase @Inject constructor(
         for ((provider, model) in candidates) {
             emit(StreamChunk.ProviderSelected(provider.id, provider.name, model))
             // Hermes brings its own tools; the app's tools are for direct model providers.
-            var tools = if (provider.isHermes) emptyList() else toolsFor(access, agent)
+            // Connections a loaded skill switched on for the rest of this reply.
+            val activated = mutableSetOf<String>()
+            var toolsOff = provider.isHermes
+            var tools = if (provider.isHermes) emptyList() else toolsFor(access, agent, activated)
             // Skip tools up front for models the catalog says can't use them, and only mention it if the user turned on device access.
             val onlyAgentTools = tools.all { it.capability == com.hermes.agent.domain.tools.Capability.AGENTS }
             if (tools.isNotEmpty() && provider.type == com.hermes.agent.domain.model.ProviderType.OPENROUTER &&
@@ -169,6 +173,7 @@ class SendMessageUseCase @Inject constructor(
             ) {
                 if (!onlyAgentTools) emit(StreamChunk.Notice("$model doesn't support tools, so it answered without device access. Pick a model marked \"tools\"."))
                 tools = emptyList()
+                toolsOff = true
             }
             val attempt = Attempt((pastTurns + turnFor(provider, model, forceText = false)).toMutableList())
             val toolContext = ToolContext(conversation.id, access, delegate = { args ->
@@ -197,12 +202,14 @@ class SendMessageUseCase @Inject constructor(
                         // Many models reject the tools field outright; answer without device access rather than fail.
                         if (e is CancellationException || tools.isEmpty() || attempt.toolsRan || !looksLikeNoToolSupport(e)) throw e
                         tools = emptyList()
+                        toolsOff = true
                         if (!onlyAgentTools) emit(StreamChunk.Notice("$model doesn't support tools, so it answered without device access. Pick a model marked \"tools\"."))
                         continue
                     }
                     if (calls.isEmpty()) break
                     attempt.turns += ChatTurn.Assistant(attempt.roundText.toString(), calls)
                     for (call in calls) attempt.turns += runTool(call, tools, toolContext, attempt)
+                    if (!toolsOff && activated.addAll(skillConnections(calls))) tools = toolsFor(access, agent, activated)
                     round++
                 }
                 // Tools ran but no answer followed (the rounds ran out, or the model stopped after a tool): ask for one, without tools.
@@ -385,7 +392,9 @@ class SendMessageUseCase @Inject constructor(
         if ("read_skill" in names) {
             val skills = agentLibrary.skills.value
             parts += if (skills.isEmpty()) "No skills are saved yet." else
-                "Saved skills (load one with read_skill before a task it covers, then follow it):\n" + skills.joinToString("\n") { "- ${it.name}: ${it.description}" }
+                "Saved skills (load one with read_skill before a task it covers, then follow it):\n" + skills.joinToString("\n") { sk ->
+                    "- ${sk.name}: ${sk.description}" + sk.connections.takeIf { it.isNotEmpty() }?.joinToString(prefix = " (switches on: ", postfix = ")").orEmpty()
+                }
         }
         if ("save_skill" in names) parts += "After working out a multi-step procedure that worked and is likely to come up again, save it with save_skill " +
             "(or improve the skill you used if you found a better way), and tell the user you did."
@@ -397,8 +406,28 @@ class SendMessageUseCase @Inject constructor(
         return parts.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
     }
 
-    private fun toolsFor(access: Set<com.hermes.agent.domain.tools.Capability>, agent: AgentProfile?): List<AgentTool> =
-        toolRegistry.enabled(access).filter { agent == null || agent.tools.isEmpty() || it.name in agent.tools }
+    /**
+     * Built-in tools allowed by [access] (and the agent's tool list), plus connection tools: every-chat connections, the agent's own
+     * connections, and those a loaded skill switched on ([activated], lowercase names).
+     */
+    private fun toolsFor(access: Set<com.hermes.agent.domain.tools.Capability>, agent: AgentProfile?, activated: Set<String>): List<AgentTool> {
+        val allowed = { name: String -> agent == null || agent.tools.isEmpty() || name in agent.tools }
+        val builtIn = toolRegistry.enabled(access).filter { allowed(it.name) }
+        if (com.hermes.agent.domain.tools.Capability.CONNECTIONS !in access) return builtIn
+        val named = activated + agent?.connections.orEmpty().map { it.lowercase() }
+        val fromConnections = connectionRepository.connections.value.filter { it.enabled }.flatMap { c ->
+            val asked = c.name.lowercase() in named
+            if (!asked && c.scope != com.hermes.agent.data.connections.ToolScope.ALL_CHATS) return@flatMap emptyList()
+            c.activeTools.map { com.hermes.agent.data.connections.ConnectionTool(c, it, connectionRepository) }.filter { asked || allowed(it.name) }
+        }
+        return builtIn + fromConnections.distinctBy { it.name }
+    }
+
+    /** Lowercase names of connections that skills loaded by these calls switch on. */
+    private fun skillConnections(calls: List<ToolCall>): Set<String> = calls.filter { it.name == "read_skill" }.flatMap { call ->
+        val name = runCatching { JsonParser.parseString(call.arguments).asJsonObject.get("name").asString }.getOrNull() ?: return@flatMap emptyList()
+        agentLibrary.skill(name)?.connections.orEmpty().map { it.lowercase() }
+    }.toSet()
 
     private fun agentPrompt(agent: AgentProfile) =
         "You are ${agent.name}${agent.description.takeIf { it.isNotBlank() }?.let { ", $it" }.orEmpty()}.\n\n${agent.instructions}".trim()
@@ -422,7 +451,8 @@ class SendMessageUseCase @Inject constructor(
             ?.takeIf { it.isNotEmpty() } ?: listOf(parent).filter { !it.first.isHermes }
         if (candidates.isEmpty()) error("No model is available for a sub-agent; add a direct provider such as OpenRouter.")
         val access = profile?.deviceAccess?.let { it intersect parentAccess } ?: parentAccess
-        val tools = toolsFor(access, profile).filter { it.name != "delegate_task" }
+        val activated = mutableSetOf<String>()
+        var tools = toolsFor(access, profile, activated).filter { it.name != "delegate_task" }
         val context = ToolContext(conversationId, access) // no delegate: sub-agents don't nest
         val who = profile?.name ?: "Sub-agent"
         val system = listOfNotNull(
@@ -447,6 +477,7 @@ class SendMessageUseCase @Inject constructor(
                     sub.turns += ChatTurn.Assistant(sub.roundText.toString(), calls)
                     ranTools = true
                     for (call in calls) sub.turns += runTool(call, tools, context, chat, labelPrefix = "↳ $who: ")
+                    if (activated.addAll(skillConnections(calls))) tools = toolsFor(access, profile, activated).filter { it.name != "delegate_task" }
                     rounds++
                 }
                 if (sub.roundText.isBlank() && ranTools) {

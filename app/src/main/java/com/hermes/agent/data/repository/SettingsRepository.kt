@@ -39,6 +39,8 @@ class SettingsRepository @Inject constructor(
         val STT_MODEL = stringPreferencesKey("stt_model")
         /** Set once the user has saved device access with Skills & agents present, so that capability starts on but can be turned off. */
         val AGENTS_OFFERED = booleanPreferencesKey("agents_offered")
+        /** Same, for capabilities added later: names of default-on capabilities the user has already seen. */
+        val OFFERED = stringSetPreferencesKey("offered_capabilities")
     }
 
     val settings: Flow<AgentSettings> = context.dataStore.data.map { prefs ->
@@ -54,7 +56,7 @@ class SettingsRepository @Inject constructor(
             theme = enumOr(prefs[Keys.THEME], defaults.theme),
             deviceAccess = prefs[Keys.DEVICE_ACCESS].orEmpty()
                 .mapNotNull { runCatching { Capability.valueOf(it) }.getOrNull() }.toSet() +
-                (if (prefs[Keys.AGENTS_OFFERED] == true) emptySet() else setOf(Capability.AGENTS)),
+                (DEFAULT_ON - offered(prefs)),
             imageProviderId = prefs[Keys.IMAGE_PROVIDER].orEmpty(),
             imageModel = prefs[Keys.IMAGE_MODEL].orEmpty(),
             ttsProviderId = prefs[Keys.TTS_PROVIDER].orEmpty(),
@@ -79,6 +81,7 @@ class SettingsRepository @Inject constructor(
             prefs[Keys.THEME] = settings.theme.name
             prefs[Keys.DEVICE_ACCESS] = settings.deviceAccess.map { it.name }.toSet()
             prefs[Keys.AGENTS_OFFERED] = true
+            prefs[Keys.OFFERED] = DEFAULT_ON.map { it.name }.toSet()
             prefs[Keys.IMAGE_PROVIDER] = settings.imageProviderId
             prefs[Keys.IMAGE_MODEL] = settings.imageModel
             prefs[Keys.TTS_PROVIDER] = settings.ttsProviderId
@@ -89,6 +92,15 @@ class SettingsRepository @Inject constructor(
             prefs[Keys.STT_PROVIDER] = settings.sttProviderId
             prefs[Keys.STT_MODEL] = settings.sttModel
         }
+    }
+
+    private fun offered(prefs: Preferences): Set<Capability> =
+        prefs[Keys.OFFERED].orEmpty().mapNotNull { n -> Capability.entries.firstOrNull { it.name == n } }.toSet() +
+            (if (prefs[Keys.AGENTS_OFFERED] == true) setOf(Capability.AGENTS) else emptySet())
+
+    private companion object {
+        /** On until the user turns them off: they do nothing until skills, agents or connections exist. */
+        val DEFAULT_ON = setOf(Capability.AGENTS, Capability.CONNECTIONS)
     }
 
     private inline fun <reified T : Enum<T>> enumOr(name: String?, default: T): T =

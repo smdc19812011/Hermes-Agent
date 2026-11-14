@@ -15,4 +15,5 @@ sealed class Routes(val route: String) {
     data object Sandbox : Routes("sandbox")
     data object ToolLibrary : Routes("tools")
     data object Agents : Routes("agents")
+    data object Connections : Routes("connections")
 }

@@ -10,7 +10,8 @@ enum class Capability(val displayName: String, val description: String, val emoj
     USB("USB", "Identify and drive USB devices: serial, HID, printers, USB drives, MIDI, raw I/O, and downloadable driver profiles (you approve every send).", "🔌"),
     MEDIA("Images, audio & video", "Generate images and speech, search for images, and post files from the web or made in Termux into the chat to download.", "🎨"),
     SHELL("Termux shell", "Run commands in Termux and install missing tools (nmap, adb, pip/npm packages, GitHub releases). You approve every command and install.", "🖥️"),
-    AGENTS("Skills & agents", "Use saved skills, save new ones, create agents, and hand sub-tasks to sub-agents. You approve every new skill or agent.", "🧩")
+    AGENTS("Skills & agents", "Use saved skills, save new ones, create agents, and hand sub-tasks to sub-agents. You approve every new skill or agent.", "🧩"),
+    CONNECTIONS("Connections", "Use tools from the MCP servers and APIs you add under Settings → Connections. Each connection sets when you're asked first.", "🔗")
 }
 
 interface AgentTool {
