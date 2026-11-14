@@ -37,6 +37,8 @@ class SettingsRepository @Inject constructor(
         val VISION_MODEL = stringPreferencesKey("vision_model")
         val STT_PROVIDER = stringPreferencesKey("stt_provider")
         val STT_MODEL = stringPreferencesKey("stt_model")
+        /** Set once the user has saved device access with Skills & agents present, so that capability starts on but can be turned off. */
+        val AGENTS_OFFERED = booleanPreferencesKey("agents_offered")
     }
 
     val settings: Flow<AgentSettings> = context.dataStore.data.map { prefs ->
@@ -51,7 +53,8 @@ class SettingsRepository @Inject constructor(
             showProviderBadge = prefs[Keys.SHOW_PROVIDER_BADGE] ?: defaults.showProviderBadge,
             theme = enumOr(prefs[Keys.THEME], defaults.theme),
             deviceAccess = prefs[Keys.DEVICE_ACCESS].orEmpty()
-                .mapNotNull { runCatching { Capability.valueOf(it) }.getOrNull() }.toSet(),
+                .mapNotNull { runCatching { Capability.valueOf(it) }.getOrNull() }.toSet() +
+                (if (prefs[Keys.AGENTS_OFFERED] == true) emptySet() else setOf(Capability.AGENTS)),
             imageProviderId = prefs[Keys.IMAGE_PROVIDER].orEmpty(),
             imageModel = prefs[Keys.IMAGE_MODEL].orEmpty(),
             ttsProviderId = prefs[Keys.TTS_PROVIDER].orEmpty(),
@@ -75,6 +78,7 @@ class SettingsRepository @Inject constructor(
             prefs[Keys.SHOW_PROVIDER_BADGE] = settings.showProviderBadge
             prefs[Keys.THEME] = settings.theme.name
             prefs[Keys.DEVICE_ACCESS] = settings.deviceAccess.map { it.name }.toSet()
+            prefs[Keys.AGENTS_OFFERED] = true
             prefs[Keys.IMAGE_PROVIDER] = settings.imageProviderId
             prefs[Keys.IMAGE_MODEL] = settings.imageModel
             prefs[Keys.TTS_PROVIDER] = settings.ttsProviderId

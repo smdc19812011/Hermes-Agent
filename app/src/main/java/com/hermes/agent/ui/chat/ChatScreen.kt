@@ -55,6 +55,7 @@ fun ChatScreen(
     conversationId: String,
     onBack: () -> Unit,
     onOpenProviders: () -> Unit,
+    onOpenAgents: () -> Unit,
     vm: ChatViewModel = hiltViewModel()
 ) {
     LaunchedEffect(conversationId) { vm.init(conversationId) }
@@ -75,6 +76,9 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     var inputText by remember { mutableStateOf("") }
     var showRoutingMenu by remember { mutableStateOf(false) }
+    var showAgentMenu by remember { mutableStateOf(false) }
+    val agents by vm.agents.collectAsStateWithLifecycle()
+    val activeAgent = agents.firstOrNull { it.id == state.conversation?.agentId }
 
     val showStreamingItem = state.isLoading
     val itemCount = state.messages.size + if (showStreamingItem) 1 else 0
@@ -103,9 +107,13 @@ fun ChatScreen(
                 title = {
                     Column {
                         Text(state.conversation?.title ?: "Chat", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val agentLabel = activeAgent?.let { "${it.name} · " }.orEmpty()
+                        if (state.activeProviderName == null && activeAgent != null) {
+                            Text(activeAgent.name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+                        }
                         state.activeProviderName?.let { name ->
                             Text(
-                                "$name · ${state.activeModel.orEmpty()}",
+                                "$agentLabel$name · ${state.activeModel.orEmpty()}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 maxLines = 1,
@@ -128,6 +136,27 @@ fun ChatScreen(
                         else MaterialTheme.colorScheme.primary
                         IconButton(onClick = { vm.cycleUnrestrictedMode() }) {
                             Icon(icon, "Unrestricted mode: ${conv.unrestrictedMode.displayName}", tint = tint)
+                        }
+                    }
+                    Box {
+                        IconButton(onClick = { showAgentMenu = true }) {
+                            Icon(Icons.Default.Psychology, activeAgent?.let { "Agent: ${it.name}" } ?: "Choose an agent",
+                                tint = if (activeAgent != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        DropdownMenu(expanded = showAgentMenu, onDismissRequest = { showAgentMenu = false }) {
+                            (listOf<com.hermes.agent.domain.model.AgentProfile?>(null) + agents).forEach { a ->
+                                DropdownMenuItem(
+                                    text = { Text(a?.name ?: "No agent") },
+                                    onClick = { vm.setAgent(a?.id); showAgentMenu = false },
+                                    leadingIcon = {
+                                        if (activeAgent?.id == a?.id) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+                                        else Spacer(Modifier.size(24.dp))
+                                    }
+                                )
+                            }
+                            HorizontalDivider()
+                            DropdownMenuItem(text = { Text("Manage skills & agents") }, onClick = { showAgentMenu = false; onOpenAgents() },
+                                leadingIcon = { Icon(Icons.Default.Settings, null) })
                         }
                     }
                     Box {

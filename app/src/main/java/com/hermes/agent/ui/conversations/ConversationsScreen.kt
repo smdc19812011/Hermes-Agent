@@ -79,11 +79,27 @@ fun ConversationsScreen(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { vm.newConversation(onOpenChat) },
-                icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("New chat") }
-            )
+            val agents by vm.agents.collectAsStateWithLifecycle()
+            var agentMenu by remember { mutableStateOf(false) }
+            Box {
+                ExtendedFloatingActionButton(
+                    // With saved agents, ask which one should run the new chat.
+                    onClick = { if (agents.isEmpty()) vm.newConversation(onCreated = onOpenChat) else agentMenu = true },
+                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                    text = { Text("New chat") }
+                )
+                DropdownMenu(expanded = agentMenu, onDismissRequest = { agentMenu = false }) {
+                    DropdownMenuItem(text = { Text("Regular chat") }, leadingIcon = { Icon(Icons.Outlined.ChatBubbleOutline, null) },
+                        onClick = { agentMenu = false; vm.newConversation(onCreated = onOpenChat) })
+                    agents.forEach { a ->
+                        DropdownMenuItem(
+                            text = { Text(a.name) },
+                            leadingIcon = { Icon(Icons.Default.Psychology, null) },
+                            onClick = { agentMenu = false; vm.newConversation(a.id, onOpenChat) }
+                        )
+                    }
+                }
+            }
         }
     ) { padding ->
         Column(

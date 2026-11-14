@@ -37,7 +37,8 @@ class SendMessageUseCase @Inject constructor(
     private val toolLibrary: com.hermes.agent.data.toolbox.ToolLibraryRepository,
     private val attachmentStore: com.hermes.agent.data.media.AttachmentStore,
     private val mediaReader: com.hermes.agent.data.media.MediaReader,
-    private val modelCatalog: com.hermes.agent.data.repository.ModelCatalogRepository
+    private val modelCatalog: com.hermes.agent.data.repository.ModelCatalogRepository,
+    private val agentLibrary: com.hermes.agent.data.agents.AgentLibraryRepository
 ) {
     operator fun invoke(
         conversation: Conversation,
@@ -46,6 +47,9 @@ class SendMessageUseCase @Inject constructor(
         attachments: List<Attachment> = emptyList()
     ): Flow<StreamChunk> = flow {
         val settings = settingsRepository.settings.first()
+        val agent = agentLibrary.agent(conversation.agentId)
+        // An agent can narrow device access but never widen what Settings allows.
+        val access = agent?.deviceAccess?.let { it intersect settings.deviceAccess } ?: settings.deviceAccess
 
         val userMessage = Message(conversationId = conversation.id, role = Role.USER, content = userInput, attachments = attachments)
         conversationRepository.insertMessage(userMessage)
@@ -59,13 +63,23 @@ class SendMessageUseCase @Inject constructor(
             UnrestrictedMode.NO_SYSTEM -> null
             UnrestrictedMode.CUSTOM -> settings.customUnrestrictedPrompt.ifBlank { DEFAULT_UNRESTRICTED_PROMPT }
             UnrestrictedMode.OFF -> conversation.systemPrompt.ifBlank { settings.globalSystemPrompt }.ifBlank { null }
+        }.let { base ->
+            if (agent == null || conversation.unrestrictedMode == UnrestrictedMode.NO_SYSTEM) base
+            else listOfNotNull(agentPrompt(agent), base).joinToString("\n\n")
         }
 
         // Routing orders providers; within each provider its models run primary, secondary, ... nth.
-        val candidates = routerService
-            .resolveProviders(conversation.routingStrategy, conversation.pinnedProviderId)
-            .flatMap { provider -> provider.models.filter { it.isNotBlank() }.map { model -> provider to model } }
-            .take(settings.maxProviderAttempts.coerceAtLeast(1))
+        // An agent with its own models uses them, in its order; otherwise the chat's routing applies.
+        val agentCandidates = agent?.models?.takeIf { it.isNotEmpty() }
+            ?.let { com.hermes.agent.data.agents.AgentRouting.resolve(it, providerRepository.getEnabled()) }.orEmpty()
+        if (agent != null && agent.models.isNotEmpty() && agentCandidates.isEmpty()) {
+            emit(StreamChunk.Notice("None of ${agent.name}'s models match an enabled provider, so the chat's usual models answered."))
+        }
+        val candidates = agentCandidates.ifEmpty {
+            routerService
+                .resolveProviders(conversation.routingStrategy, conversation.pinnedProviderId)
+                .flatMap { provider -> provider.models.filter { it.isNotBlank() }.map { model -> provider to model } }
+        }.take(settings.maxProviderAttempts.coerceAtLeast(1))
 
         if (candidates.isEmpty()) {
             emit(StreamChunk.Failed("No enabled providers. Add one from the Providers screen."))
@@ -73,7 +87,7 @@ class SendMessageUseCase @Inject constructor(
             return@flow
         }
 
-        val shellOn = com.hermes.agent.domain.tools.Capability.SHELL in settings.deviceAccess
+        val shellOn = com.hermes.agent.domain.tools.Capability.SHELL in access
         // Only the new message carries file contents; earlier attachments are named so the model knows they exist.
         val pastTurns: List<ChatTurn> = history.mapNotNull {
             when (it.role) {
@@ -140,15 +154,26 @@ class SendMessageUseCase @Inject constructor(
             val text = (sections + enc.first.note + enc.second.note + userInput).filter { it.isNotBlank() }.joinToString("\n\n")
             return ChatTurn.User(text, enc.first.parts)
         }
-        val toolContext = ToolContext(conversation.id, settings.deviceAccess)
-        val installed = if (com.hermes.agent.domain.tools.Capability.SHELL in settings.deviceAccess) toolLibrary.installedNames() else emptyList()
+        val installed = if (shellOn) toolLibrary.installedNames() else emptyList()
         var lastError = "unknown error"
 
         for ((provider, model) in candidates) {
             emit(StreamChunk.ProviderSelected(provider.id, provider.name, model))
             // Hermes brings its own tools; the app's tools are for direct model providers.
-            var tools = if (provider.isHermes) emptyList() else toolRegistry.enabled(settings.deviceAccess)
+            var tools = if (provider.isHermes) emptyList() else toolsFor(access, agent)
+            // Skip tools up front for models the catalog says can't use them, and only mention it if the user turned on device access.
+            val onlyAgentTools = tools.all { it.capability == com.hermes.agent.domain.tools.Capability.AGENTS }
+            if (tools.isNotEmpty() && provider.type == com.hermes.agent.domain.model.ProviderType.OPENROUTER &&
+                runCatching { modelCatalog.cached(provider.type, provider.effectiveBaseUrl, provider.apiKey) }.getOrNull()
+                    ?.firstOrNull { it.id == model }?.supportsTools == false
+            ) {
+                if (!onlyAgentTools) emit(StreamChunk.Notice("$model doesn't support tools, so it answered without device access. Pick a model marked \"tools\"."))
+                tools = emptyList()
+            }
             val attempt = Attempt((pastTurns + turnFor(provider, model, forceText = false)).toMutableList())
+            val toolContext = ToolContext(conversation.id, access, delegate = { args ->
+                runSubAgent(args, provider to model, access, settings, conversation.id, attempt)
+            })
             readings.forEach { (uri, r) ->
                 val name = local.firstOrNull { it.first.uri == uri }?.first?.name ?: return@forEach
                 attempt.log["read-$uri"] = ToolActivity("read-$uri", "read", r.fold({ "Read $name with ${it.by}" }, { "Couldn't read $name" }), "👁", true)
@@ -172,7 +197,7 @@ class SendMessageUseCase @Inject constructor(
                         // Many models reject the tools field outright; answer without device access rather than fail.
                         if (e is CancellationException || tools.isEmpty() || attempt.toolsRan || !looksLikeNoToolSupport(e)) throw e
                         tools = emptyList()
-                        emit(StreamChunk.Notice("$model doesn't support tools, so it answered without device access. Pick a model marked \"tools\"."))
+                        if (!onlyAgentTools) emit(StreamChunk.Notice("$model doesn't support tools, so it answered without device access. Pick a model marked \"tools\"."))
                         continue
                     }
                     if (calls.isEmpty()) break
@@ -243,13 +268,15 @@ class SendMessageUseCase @Inject constructor(
         tools: List<AgentTool>,
         settings: AgentSettings,
         conversationId: String,
-        finalAnswer: Boolean = false
+        finalAnswer: Boolean = false,
+        /** False for sub-agents: their text is a tool result, not part of the visible reply. */
+        echo: Boolean = true
     ): List<ToolCall> {
         val calls = mutableListOf<ToolCall>()
         attempt.roundText = StringBuilder()
         if (attempt.text.isNotEmpty()) {
             attempt.text.append("\n\n")
-            emit(StreamChunk.Token("\n\n"))
+            if (echo) emit(StreamChunk.Token("\n\n"))
         }
         llmRepository
             .streamTurn(provider, model, attempt.turns, systemPrompt, tools, settings.requestTimeoutSeconds, conversationId, finalAnswer)
@@ -258,7 +285,7 @@ class SendMessageUseCase @Inject constructor(
                     is StreamEvent.Text -> {
                         attempt.text.append(event.text)
                         attempt.roundText.append(event.text)
-                        emit(StreamChunk.Token(event.text))
+                        if (echo) emit(StreamChunk.Token(event.text))
                     }
                     is StreamEvent.Tool -> {
                         val a = event.activity
@@ -281,12 +308,13 @@ class SendMessageUseCase @Inject constructor(
         call: ToolCall,
         tools: List<AgentTool>,
         context: ToolContext,
-        attempt: Attempt
+        attempt: Attempt,
+        labelPrefix: String = ""
     ): ChatTurn.ToolResult {
         val tool = tools.firstOrNull { it.name == call.name }
             ?: return ChatTurn.ToolResult(call.id, call.name, "Unknown tool ${call.name}.")
         val args = runCatching { JsonParser.parseString(call.arguments).asJsonObject }.getOrDefault(JsonObject())
-        val activity = ToolActivity(call.id, tool.name, tool.label(args), tool.capability.emoji, completed = false)
+        val activity = ToolActivity(call.id, tool.name, labelPrefix + tool.label(args), tool.capability.emoji, completed = false)
         attempt.log[call.id] = activity
         emit(StreamChunk.Tool(activity))
 
@@ -294,7 +322,8 @@ class SendMessageUseCase @Inject constructor(
             emit(StreamChunk.ApprovalRequested("", ApprovalRequest(
                 runId = call.id,
                 command = activity.label,
-                description = "${tool.capability.displayName}: the AI wants to run this on your phone.",
+                description = if (tool.capability == com.hermes.agent.domain.tools.Capability.AGENTS) "Skills & agents: the AI wants to save this for every chat."
+                    else "${tool.capability.displayName}: the AI wants to run this on your phone.",
                 choices = listOf("once", "session", "deny"),
                 local = true
             )))
@@ -346,7 +375,95 @@ class SendMessageUseCase @Inject constructor(
             (if (installed.isNotEmpty()) " Already installed for you: ${installed.joinToString()}." else "") +
             (if (tools.any { it.name == "post_file" }) " To show the user an image, video, audio or any file, post it with post_file, generate_image or text_to_speech; " +
                 "you can build media in Termux (ffmpeg, ImageMagick, Python) and post the result." else "")
-        return listOfNotNull(base, note).joinToString("\n\n")
+        return listOfNotNull(base, note, libraryNote(tools)).joinToString("\n\n")
+    }
+
+    /** Lists skills and agents by name and description; full skill text loads on demand with read_skill. */
+    private fun libraryNote(tools: List<AgentTool>): String? {
+        val names = tools.map { it.name }.toSet()
+        val parts = mutableListOf<String>()
+        if ("read_skill" in names) {
+            val skills = agentLibrary.skills.value
+            parts += if (skills.isEmpty()) "No skills are saved yet." else
+                "Saved skills (load one with read_skill before a task it covers, then follow it):\n" + skills.joinToString("\n") { "- ${it.name}: ${it.description}" }
+        }
+        if ("save_skill" in names) parts += "After working out a multi-step procedure that worked and is likely to come up again, save it with save_skill " +
+            "(or improve the skill you used if you found a better way), and tell the user you did."
+        if ("delegate_task" in names) {
+            val agents = agentLibrary.agents.value
+            parts += "You can hand self-contained sub-tasks to sub-agents with delegate_task" +
+                (if (agents.isEmpty()) "." else ". Saved agents:\n" + agents.joinToString("\n") { "- ${it.name}: ${it.description.ifBlank { it.instructions.take(100) }}" })
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
+    }
+
+    private fun toolsFor(access: Set<com.hermes.agent.domain.tools.Capability>, agent: AgentProfile?): List<AgentTool> =
+        toolRegistry.enabled(access).filter { agent == null || agent.tools.isEmpty() || it.name in agent.tools }
+
+    private fun agentPrompt(agent: AgentProfile) =
+        "You are ${agent.name}${agent.description.takeIf { it.isNotBlank() }?.let { ", $it" }.orEmpty()}.\n\n${agent.instructions}".trim()
+
+    /**
+     * Runs one sub-agent to completion inside the chat's flow, so its tool calls still show in the chat and still ask the user
+     * for approval. It starts from only the task and context it's given and can't start sub-agents of its own.
+     */
+    private suspend fun FlowCollector<StreamChunk>.runSubAgent(
+        args: JsonObject,
+        parent: Pair<Provider, String>,
+        parentAccess: Set<com.hermes.agent.domain.tools.Capability>,
+        settings: AgentSettings,
+        conversationId: String,
+        chat: Attempt
+    ): String {
+        val task = args.get("task")?.takeIf { it.isJsonPrimitive }?.asString?.trim().orEmpty().ifEmpty { error("task is required") }
+        val profile = args.get("agent")?.takeIf { it.isJsonPrimitive }?.asString?.trim()?.takeIf { it.isNotEmpty() }?.let { agentLibrary.agentNamed(it) }
+        val providers = providerRepository.getEnabled().filter { !it.isHermes }
+        val candidates = profile?.models?.takeIf { it.isNotEmpty() }?.let { com.hermes.agent.data.agents.AgentRouting.resolve(it, providers) }
+            ?.takeIf { it.isNotEmpty() } ?: listOf(parent).filter { !it.first.isHermes }
+        if (candidates.isEmpty()) error("No model is available for a sub-agent; add a direct provider such as OpenRouter.")
+        val access = profile?.deviceAccess?.let { it intersect parentAccess } ?: parentAccess
+        val tools = toolsFor(access, profile).filter { it.name != "delegate_task" }
+        val context = ToolContext(conversationId, access) // no delegate: sub-agents don't nest
+        val who = profile?.name ?: "Sub-agent"
+        val system = listOfNotNull(
+            profile?.let(::agentPrompt),
+            "You are a sub-agent working for another AI in the Hermes Agent app on the user's Android phone. Do the task with your tools, " +
+                "then reply with a complete, factual report: what you did, what you found (exact values, IPs, paths), and anything you couldn't do. " +
+                "Your reply goes to the other AI, not the user.",
+            libraryNote(tools)
+        ).joinToString("\n\n")
+        val prompt = listOfNotNull(args.get("context")?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() }?.let { "Context:\n$it" }, "Task:\n$task")
+            .joinToString("\n\n")
+
+        var lastError: Exception? = null
+        for ((provider, model) in candidates.take(3)) {
+            val sub = Attempt(mutableListOf(ChatTurn.User(prompt)))
+            var ranTools = false
+            try {
+                var rounds = 0
+                while (true) {
+                    val calls = streamRound(provider, model, sub, system, tools, settings, conversationId, finalAnswer = rounds >= MAX_TOOL_ROUNDS, echo = false)
+                    if (calls.isEmpty() || rounds >= MAX_TOOL_ROUNDS) break
+                    sub.turns += ChatTurn.Assistant(sub.roundText.toString(), calls)
+                    ranTools = true
+                    for (call in calls) sub.turns += runTool(call, tools, context, chat, labelPrefix = "↳ $who: ")
+                    rounds++
+                }
+                if (sub.roundText.isBlank() && ranTools) {
+                    streamRound(provider, model, sub, "$system\n\nNow write your report from the tool results above. Don't call tools.", tools, settings,
+                        conversationId, finalAnswer = true, echo = false)
+                }
+                chat.files += sub.files
+                val report = sub.text.toString().trim().ifEmpty { toolResultsFallback(sub.turns) }
+                return "Report from $who ($model):\n$report"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                if (ranTools) break // its tools may have had effects; don't repeat them on another model
+            }
+        }
+        error("$who failed: ${lastError?.message ?: "no reply"}")
     }
 
     /** When the model wrote nothing at all, the user still gets what its tools returned. */

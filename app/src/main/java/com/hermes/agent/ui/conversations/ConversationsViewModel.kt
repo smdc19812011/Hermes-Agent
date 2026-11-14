@@ -16,8 +16,11 @@ import javax.inject.Inject
 @HiltViewModel
 class ConversationsViewModel @Inject constructor(
     private val repository: ConversationRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    agentLibrary: com.hermes.agent.data.agents.AgentLibraryRepository
 ) : ViewModel() {
+
+    val agents: StateFlow<List<com.hermes.agent.domain.model.AgentProfile>> = agentLibrary.agents
 
     private val searchQuery = MutableStateFlow("")
 
@@ -32,12 +35,13 @@ class ConversationsViewModel @Inject constructor(
         searchQuery.value = query
     }
 
-    fun newConversation(onCreated: (String) -> Unit) {
+    fun newConversation(agentId: String? = null, onCreated: (String) -> Unit) {
         viewModelScope.launch {
             val settings = settingsRepository.settings.first()
             val conversation = Conversation(
                 routingStrategy = settings.globalRoutingStrategy,
-                unrestrictedMode = settings.globalUnrestrictedMode
+                unrestrictedMode = settings.globalUnrestrictedMode,
+                agentId = agentId
             )
             repository.save(conversation)
             onCreated(conversation.id)

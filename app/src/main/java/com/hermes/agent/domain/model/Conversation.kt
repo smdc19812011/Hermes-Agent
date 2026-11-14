@@ -13,7 +13,9 @@ data class Conversation(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val messageCount: Int = 0,
-    val lastMessage: String = ""
+    val lastMessage: String = "",
+    /** Saved agent this chat runs as, if any. */
+    val agentId: String? = null
 ) {
     companion object {
         const val DEFAULT_TITLE = "New conversation"
@@ -30,7 +32,8 @@ fun ConversationEntity.toDomain() = Conversation(
     createdAt = createdAt,
     updatedAt = updatedAt,
     messageCount = messageCount,
-    lastMessage = lastMessage
+    lastMessage = lastMessage,
+    agentId = agentId
 )
 
 fun Conversation.toEntity() = ConversationEntity(
@@ -43,5 +46,6 @@ fun Conversation.toEntity() = ConversationEntity(
     createdAt = createdAt,
     updatedAt = updatedAt,
     messageCount = messageCount,
-    lastMessage = lastMessage
+    lastMessage = lastMessage,
+    agentId = agentId
 )

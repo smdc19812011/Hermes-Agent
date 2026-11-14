@@ -14,5 +14,6 @@ data class ConversationEntity(
     val createdAt: Long,
     val updatedAt: Long,
     val messageCount: Int = 0,
-    val lastMessage: String = ""
+    val lastMessage: String = "",
+    val agentId: String? = null
 )

@@ -20,6 +20,7 @@ import kotlin.math.roundToInt
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenToolLibrary: () -> Unit,
+    onOpenAgents: () -> Unit,
     vm: SettingsViewModel = hiltViewModel()
 ) {
     val loaded by vm.settings.collectAsStateWithLifecycle()
@@ -59,6 +60,9 @@ fun SettingsScreen(
             )
             OutlinedButton(onClick = onOpenToolLibrary, modifier = Modifier.fillMaxWidth()) {
                 Text("Tool library: install programs for every chat")
+            }
+            OutlinedButton(onClick = onOpenAgents, modifier = Modifier.fillMaxWidth()) {
+                Text("Skills & agents")
             }
 
             SectionHeader("Media")

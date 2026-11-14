@@ -52,8 +52,12 @@ class ChatViewModel @Inject constructor(
     private val toolApprovals: ToolApprovals,
     private val attachmentStore: com.hermes.agent.data.media.AttachmentStore,
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
-    settingsRepository: SettingsRepository
+    settingsRepository: SettingsRepository,
+    agentLibrary: com.hermes.agent.data.agents.AgentLibraryRepository
 ) : ViewModel() {
+
+    /** Saved agents this chat can switch to. */
+    val agents: StateFlow<List<com.hermes.agent.domain.model.AgentProfile>> = agentLibrary.agents
 
     private val _state = MutableStateFlow(ChatUiState(termuxReady = sandboxRunner.termuxReady()))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
@@ -239,6 +243,11 @@ class ChatViewModel @Inject constructor(
         val conv = _state.value.conversation ?: return
         val modes = UnrestrictedMode.entries
         save(conv.copy(unrestrictedMode = modes[(conv.unrestrictedMode.ordinal + 1) % modes.size]))
+    }
+
+    fun setAgent(agentId: String?) {
+        val conv = _state.value.conversation ?: return
+        save(conv.copy(agentId = agentId))
     }
 
     fun setRoutingStrategy(strategy: RoutingStrategy) {

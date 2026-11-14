@@ -9,7 +9,8 @@ enum class Capability(val displayName: String, val description: String, val emoj
     BLUETOOTH("Bluetooth", "Scan, read, write and subscribe to Bluetooth LE devices, and talk to Classic serial (SPP) devices (you approve every send).", "🔵"),
     USB("USB", "Identify and drive USB devices: serial, HID, printers, USB drives, MIDI, raw I/O, and downloadable driver profiles (you approve every send).", "🔌"),
     MEDIA("Images, audio & video", "Generate images and speech, search for images, and post files from the web or made in Termux into the chat to download.", "🎨"),
-    SHELL("Termux shell", "Run commands in Termux and install missing tools (nmap, adb, pip/npm packages, GitHub releases). You approve every command and install.", "🖥️")
+    SHELL("Termux shell", "Run commands in Termux and install missing tools (nmap, adb, pip/npm packages, GitHub releases). You approve every command and install.", "🖥️"),
+    AGENTS("Skills & agents", "Use saved skills, save new ones, create agents, and hand sub-tasks to sub-agents. You approve every new skill or agent.", "🧩")
 }
 
 interface AgentTool {
@@ -34,7 +35,9 @@ data class ToolContext(
     val conversationId: String,
     val enabled: Set<Capability>,
     /** Files a tool posts to the chat; collected and shown when the tool returns. */
-    val attach: (com.hermes.agent.domain.model.Attachment) -> Unit = {}
+    val attach: (com.hermes.agent.domain.model.Attachment) -> Unit = {},
+    /** Runs a sub-agent and returns its answer; null inside a sub-agent, so they can't nest. */
+    val delegate: (suspend (JsonObject) -> String)? = null
 )
 
 data class ToolCall(val id: String, val name: String, val arguments: String)
@@ -67,4 +70,21 @@ fun prop(type: String, description: String, enum: List<String>? = null) = JsonOb
 }
 
 fun JsonObject.string(key: String): String? = get(key)?.takeIf { it.isJsonPrimitive }?.asString?.trim()?.ifEmpty { null }
+fun JsonObject.strings(key: String): List<String> = get(key)?.let { e ->
+    when {
+        e.isJsonArray -> e.asJsonArray.mapNotNull { it.takeIf { x -> x.isJsonPrimitive }?.asString?.trim() }
+        e.isJsonPrimitive -> e.asString.split(',', '\n').map { it.trim() } // models sometimes send "a, b"
+        else -> emptyList()
+    }
+}.orEmpty().filter { it.isNotEmpty() }
+
+fun arrayProp(description: String, enum: List<String>? = null) = JsonObject().apply {
+    addProperty("type", "array")
+    addProperty("description", description)
+    add("items", JsonObject().apply {
+        addProperty("type", "string")
+        enum?.let { e -> add("enum", com.google.gson.JsonArray().apply { e.forEach { add(it) } }) }
+    })
+}
+
 fun JsonObject.int(key: String): Int? = get(key)?.takeIf { it.isJsonPrimitive }?.let { runCatching { it.asInt }.getOrNull() }

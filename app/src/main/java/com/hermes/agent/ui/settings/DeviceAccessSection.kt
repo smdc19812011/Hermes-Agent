@@ -23,7 +23,7 @@ private fun permissionsFor(capability: Capability): List<String> = when (capabil
     Capability.NETWORK -> listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
     Capability.BLUETOOTH -> BluetoothPermissions.required
     Capability.SHELL -> listOf(TermuxBridge.PERMISSION_RUN_COMMAND)
-    Capability.INTERNET, Capability.USB, Capability.MEDIA -> emptyList()
+    Capability.INTERNET, Capability.USB, Capability.MEDIA, Capability.AGENTS -> emptyList()
 }
 
 private fun missing(context: Context, capability: Capability) = permissionsFor(capability).filter {
