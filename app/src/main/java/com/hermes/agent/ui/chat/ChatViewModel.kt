@@ -34,6 +34,8 @@ data class ChatUiState(
     val notice: String? = null,
     val showProviderBadge: Boolean = true,
     val codeRun: CodeRun? = null,
+    /** Files posted during the reply being streamed. */
+    val streamingFiles: List<Attachment> = emptyList(),
     val termuxReady: Boolean = false
 )
 
@@ -45,6 +47,8 @@ class ChatViewModel @Inject constructor(
     private val llmRepository: LLMRepository,
     private val sandboxRunner: SandboxRunner,
     private val toolApprovals: ToolApprovals,
+    private val attachmentStore: com.hermes.agent.data.media.AttachmentStore,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
     settingsRepository: SettingsRepository
 ) : ViewModel() {
 
@@ -78,14 +82,14 @@ class ChatViewModel @Inject constructor(
         val conversation = _state.value.conversation ?: return
         if (_state.value.isLoading || input.isBlank()) return
 
-        _state.update { it.copy(isLoading = true, streamingContent = "", tools = emptyList(), approval = null, notice = null) }
+        _state.update { it.copy(isLoading = true, streamingContent = "", tools = emptyList(), approval = null, notice = null, streamingFiles = emptyList()) }
         val history = _state.value.messages
 
         sendJob = viewModelScope.launch {
             sendMessageUseCase(conversation, input.trim(), history)
                 .catch { e -> _state.update { it.copy(notice = e.message ?: "Request failed") } }
                 .onCompletion {
-                    _state.update { it.copy(isLoading = false, streamingContent = "", tools = emptyList(), approval = null) }
+                    _state.update { it.copy(isLoading = false, streamingContent = "", tools = emptyList(), approval = null, streamingFiles = emptyList()) }
                 }
                 .collect { chunk ->
                     when (chunk) {
@@ -116,6 +120,7 @@ class ChatViewModel @Inject constructor(
                         }
                         is StreamChunk.Failed -> _state.update { it.copy(notice = chunk.message) }
                         is StreamChunk.Notice -> _state.update { it.copy(notice = chunk.message) }
+                        is StreamChunk.File -> _state.update { it.copy(streamingFiles = it.streamingFiles + chunk.attachment) }
                         StreamChunk.Done -> Unit
                     }
                 }
@@ -143,6 +148,36 @@ class ChatViewModel @Inject constructor(
             }
         }
     }
+
+    /** A local copy for saving or sharing; remote previews are downloaded first. */
+    private suspend fun local(a: Attachment): Attachment {
+        if (!a.isRemote) return a
+        val conv = _state.value.conversation?.id ?: "shared"
+        return attachmentStore.download(conv, a.uri, a.name.takeIf { '.' in it }, a.caption)
+    }
+
+    fun saveAttachment(a: Attachment, target: android.net.Uri) {
+        viewModelScope.launch {
+            val result = runCatching {
+                val file = attachmentStore.file(local(a))
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    appContext.contentResolver.openOutputStream(target)!!.use { out -> file.inputStream().use { it.copyTo(out) } }
+                }
+            }
+            _state.update { it.copy(notice = result.fold({ "Saved ${a.name}." }, { e -> "Couldn't save ${a.name}: ${e.message}" })) }
+        }
+    }
+
+    /** Resolves a shareable content:// URI, then hands it to [onReady] on the main thread. */
+    fun shareAttachment(a: Attachment, onReady: (android.net.Uri, String) -> Unit) {
+        viewModelScope.launch {
+            runCatching { local(a) }
+                .onSuccess { file -> onReady(attachmentStore.shareUri(file), file.mime.takeIf { '*' !in it } ?: "application/octet-stream") }
+                .onFailure { e -> _state.update { it.copy(notice = "Couldn't share ${a.name}: ${e.message}") } }
+        }
+    }
+
+    fun fileOf(a: Attachment): java.io.File = attachmentStore.file(a)
 
     fun stop() {
         sendJob?.cancel()

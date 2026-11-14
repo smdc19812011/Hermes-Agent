@@ -10,7 +10,13 @@ data class AgentSettings(
     val showProviderBadge: Boolean = true,
     val theme: AppTheme = AppTheme.DARK,
     /** What the AI may reach through in-app tools. Empty by default: the user opts in per capability. */
-    val deviceAccess: Set<com.hermes.agent.domain.tools.Capability> = emptySet()
+    val deviceAccess: Set<com.hermes.agent.domain.tools.Capability> = emptySet(),
+    /** Blank = pick automatically from enabled providers. */
+    val imageProviderId: String = "",
+    val imageModel: String = "",
+    val ttsProviderId: String = "",
+    val ttsModel: String = "",
+    val ttsVoice: String = ""
 )
 
 enum class AppTheme { SYSTEM, LIGHT, DARK }
@@ -42,5 +48,6 @@ sealed class StreamChunk {
     data class ProviderFailed(val providerName: String, val message: String) : StreamChunk()
     data class Failed(val message: String) : StreamChunk()
     data class Notice(val message: String) : StreamChunk()
+    data class File(val attachment: Attachment) : StreamChunk()
     data object Done : StreamChunk()
 }

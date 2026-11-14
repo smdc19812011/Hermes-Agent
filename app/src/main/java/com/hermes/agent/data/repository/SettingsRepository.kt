@@ -28,6 +28,11 @@ class SettingsRepository @Inject constructor(
         val SHOW_PROVIDER_BADGE = booleanPreferencesKey("show_provider_badge")
         val THEME = stringPreferencesKey("theme")
         val DEVICE_ACCESS = stringSetPreferencesKey("device_access")
+        val IMAGE_PROVIDER = stringPreferencesKey("image_provider")
+        val IMAGE_MODEL = stringPreferencesKey("image_model")
+        val TTS_PROVIDER = stringPreferencesKey("tts_provider")
+        val TTS_MODEL = stringPreferencesKey("tts_model")
+        val TTS_VOICE = stringPreferencesKey("tts_voice")
     }
 
     val settings: Flow<AgentSettings> = context.dataStore.data.map { prefs ->
@@ -42,7 +47,12 @@ class SettingsRepository @Inject constructor(
             showProviderBadge = prefs[Keys.SHOW_PROVIDER_BADGE] ?: defaults.showProviderBadge,
             theme = enumOr(prefs[Keys.THEME], defaults.theme),
             deviceAccess = prefs[Keys.DEVICE_ACCESS].orEmpty()
-                .mapNotNull { runCatching { Capability.valueOf(it) }.getOrNull() }.toSet()
+                .mapNotNull { runCatching { Capability.valueOf(it) }.getOrNull() }.toSet(),
+            imageProviderId = prefs[Keys.IMAGE_PROVIDER].orEmpty(),
+            imageModel = prefs[Keys.IMAGE_MODEL].orEmpty(),
+            ttsProviderId = prefs[Keys.TTS_PROVIDER].orEmpty(),
+            ttsModel = prefs[Keys.TTS_MODEL].orEmpty(),
+            ttsVoice = prefs[Keys.TTS_VOICE].orEmpty()
         )
     }
 
@@ -57,6 +67,11 @@ class SettingsRepository @Inject constructor(
             prefs[Keys.SHOW_PROVIDER_BADGE] = settings.showProviderBadge
             prefs[Keys.THEME] = settings.theme.name
             prefs[Keys.DEVICE_ACCESS] = settings.deviceAccess.map { it.name }.toSet()
+            prefs[Keys.IMAGE_PROVIDER] = settings.imageProviderId
+            prefs[Keys.IMAGE_MODEL] = settings.imageModel
+            prefs[Keys.TTS_PROVIDER] = settings.ttsProviderId
+            prefs[Keys.TTS_MODEL] = settings.ttsModel
+            prefs[Keys.TTS_VOICE] = settings.ttsVoice
         }
     }
 

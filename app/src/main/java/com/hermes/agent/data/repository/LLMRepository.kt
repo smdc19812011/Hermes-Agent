@@ -33,6 +33,8 @@ sealed class StreamEvent {
     data class Approval(val request: ApprovalRequest) : StreamEvent()
     /** The model wants these tools run; sent once, when its turn ends. */
     data class ToolCalls(val calls: List<ToolCall>) : StreamEvent()
+    /** An image the model itself produced: a data: URL or a link. */
+    data class Image(val url: String) : StreamEvent()
 }
 
 /** Parses one provider's SSE stream; holds the partial tool calls between events. */
@@ -119,6 +121,10 @@ class LLMRepository @Inject constructor(
             addProperty("model", model)
             addProperty("stream", true)
             add("messages", messages)
+            // OpenRouter only returns images from image-output models when asked for that modality.
+            if (provider.type == ProviderType.OPENROUTER && "image" in model.lowercase()) {
+                add("modalities", JsonArray().apply { add("image"); add("text") })
+            }
             if (tools.isNotEmpty()) add("tools", JsonArray().apply {
                 tools.forEach { t ->
                     add(JsonObject().apply {
@@ -172,7 +178,10 @@ class LLMRepository @Inject constructor(
                     f.str("arguments")?.let { acc.third.append(it) }
                 }
             }
-            return listOfNotNull(delta.str("content")?.takeIf { it.isNotEmpty() }?.let { StreamEvent.Text(it) })
+            val images = delta.getAsJsonArray("images")?.mapNotNull { img ->
+                img.takeIf { it.isJsonObject }?.asJsonObject?.getAsJsonObject("image_url")?.str("url")?.let { StreamEvent.Image(it) }
+            }.orEmpty()
+            return listOfNotNull(delta.str("content")?.takeIf { it.isNotEmpty() }?.let { StreamEvent.Text(it) }) + images
         }
 
         override fun onEnd(): List<StreamEvent> {

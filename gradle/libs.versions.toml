@@ -23,6 +23,7 @@ concurrent-futures = "1.2.0"
 junit = "4.13.2"
 usb-serial = "v3.8.1"
 libaums = "0.10.0"
+coil = "2.7.0"
 
 [libraries]
 # Core
@@ -83,6 +84,9 @@ markwon-syntax = { group = "io.noties.markwon", name = "syntax-highlight", versi
 javascriptengine = { group = "androidx.javascriptengine", name = "javascriptengine", version.ref = "javascriptengine" }
 concurrent-futures-ktx = { group = "androidx.concurrent", name = "concurrent-futures-ktx", version.ref = "concurrent-futures" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+coil-gif = { group = "io.coil-kt", name = "coil-gif", version.ref = "coil" }
+coil-video = { group = "io.coil-kt", name = "coil-video", version.ref = "coil" }
 libaums = { group = "me.jahnen.libaums", name = "core", version.ref = "libaums" }
 usb-serial = { group = "com.github.mik3y", name = "usb-serial-for-android", version.ref = "usb-serial" }
 okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }

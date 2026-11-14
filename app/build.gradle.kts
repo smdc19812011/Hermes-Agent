@@ -21,8 +21,8 @@ android {
         applicationId = "com.hermes.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.5.1"
+        versionCode = 9
+        versionName = "1.6.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -108,6 +108,11 @@ dependencies {
     implementation(libs.usb.serial)
     // USB flash drives: SCSI over USB + FAT32 in userspace
     implementation(libs.libaums)
+
+    // Image, GIF and video-frame previews in chat
+    implementation(libs.coil.compose)
+    implementation(libs.coil.gif)
+    implementation(libs.coil.video)
 
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)

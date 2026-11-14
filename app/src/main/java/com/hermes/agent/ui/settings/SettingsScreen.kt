@@ -23,6 +23,7 @@ fun SettingsScreen(
     vm: SettingsViewModel = hiltViewModel()
 ) {
     val loaded by vm.settings.collectAsStateWithLifecycle()
+    val providers by vm.providers.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -59,6 +60,9 @@ fun SettingsScreen(
             OutlinedButton(onClick = onOpenToolLibrary, modifier = Modifier.fillMaxWidth()) {
                 Text("Tool library: install programs for every chat")
             }
+
+            SectionHeader("Media")
+            MediaSettingsSection(settings, providers) { transform -> vm.update(transform) }
 
             SectionHeader("Default routing for new chats")
             ChoiceList(

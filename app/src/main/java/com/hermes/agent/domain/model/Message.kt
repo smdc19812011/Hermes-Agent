@@ -15,6 +15,7 @@ data class Message(
     val tokenCount: Int = 0,
     val durationMs: Long = 0,
     val toolLog: List<String> = emptyList(),
+    val attachments: List<Attachment> = emptyList(),
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -28,6 +29,7 @@ fun MessageEntity.toDomain() = Message(
     tokenCount = tokenCount,
     durationMs = durationMs,
     toolLog = toolLog?.split('\n')?.filter { it.isNotBlank() }.orEmpty(),
+    attachments = Attachment.decode(attachments),
     createdAt = createdAt
 )
 
@@ -41,5 +43,6 @@ fun Message.toEntity() = MessageEntity(
     tokenCount = tokenCount,
     durationMs = durationMs,
     toolLog = toolLog.joinToString("\n"),
+    attachments = Attachment.encode(attachments),
     createdAt = createdAt
 )

@@ -151,4 +151,26 @@ class LLMRepositoryToolCallingTest {
         val e = runCatching { stream(ProviderType.OPENROUTER, listOf(ChatTurn.User("hi"))) }.exceptionOrNull()
         assertTrue(e?.message, e?.message?.contains("support tool use") == true)
     }
+
+    @Test
+    fun openRouterImageModelsGetImagesBack() {
+        server.enqueue(sse(
+            null to """{"choices":[{"delta":{"content":"Here you go."}}]}""",
+            null to """{"choices":[{"delta":{"images":[{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}}]}""",
+            null to "[DONE]"
+        ))
+        val events = runBlocking {
+            repo.streamTurn(provider(ProviderType.OPENROUTER), "google/gemini-3-pro-image", listOf(ChatTurn.User("a cat")), null, emptyList(), 30, "c").toList()
+        }
+        assertEquals(StreamEvent.Image("data:image/png;base64,iVBORw0KGgo="), events.last())
+        val body = lastRequestJson()
+        assertEquals(listOf("image", "text"), body.getAsJsonArray("modalities").map { it.asString })
+    }
+
+    @Test
+    fun textModelsDontAskForImages() {
+        server.enqueue(sse(null to """{"choices":[{"delta":{"content":"hi"}}]}""", null to "[DONE]"))
+        stream(ProviderType.OPENROUTER, listOf(ChatTurn.User("hi")), tools = emptyList())
+        assertFalse(lastRequestJson().has("modalities"))
+    }
 }

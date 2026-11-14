@@ -53,6 +53,17 @@
             </intent-filter>
         </activity>
 
+        <!-- Shares chat files with other apps (open, share) without exposing the rest of app storage. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <receiver
             android:name=".data.termux.TermuxResultReceiver"
             android:exported="false" />

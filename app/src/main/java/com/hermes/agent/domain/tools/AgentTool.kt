@@ -8,6 +8,7 @@ enum class Capability(val displayName: String, val description: String, val emoj
     INTERNET("Internet", "Fetch web pages and APIs, and search the web.", "🌐"),
     BLUETOOTH("Bluetooth", "Scan, read, write and subscribe to Bluetooth LE devices, and talk to Classic serial (SPP) devices (you approve every send).", "🔵"),
     USB("USB", "Identify and drive USB devices: serial, HID, printers, USB drives, MIDI, raw I/O, and downloadable driver profiles (you approve every send).", "🔌"),
+    MEDIA("Images, audio & video", "Generate images and speech, search for images, and post files from the web or made in Termux into the chat to download.", "🎨"),
     SHELL("Termux shell", "Run commands in Termux and install missing tools (nmap, adb, pip/npm packages, GitHub releases). You approve every command and install.", "🖥️")
 }
 
@@ -29,7 +30,12 @@ interface AgentTool {
     suspend fun run(args: JsonObject, context: ToolContext): String
 }
 
-data class ToolContext(val conversationId: String, val enabled: Set<Capability>)
+data class ToolContext(
+    val conversationId: String,
+    val enabled: Set<Capability>,
+    /** Files a tool posts to the chat; collected and shown when the tool returns. */
+    val attach: (com.hermes.agent.domain.model.Attachment) -> Unit = {}
+)
 
 data class ToolCall(val id: String, val name: String, val arguments: String)
 

@@ -61,6 +61,7 @@ fun ChatScreen(
     }
 
     val state by vm.state.collectAsStateWithLifecycle()
+    val attachmentActions = remember(vm) { AttachmentActions(vm::fileOf, vm::saveAttachment, vm::shareAttachment) }
     val listState = rememberLazyListState()
     var inputText by remember { mutableStateOf("") }
     var showRoutingMenu by remember { mutableStateOf(false) }
@@ -172,12 +173,13 @@ fun ChatScreen(
                     message = msg,
                     showModel = state.showProviderBadge,
                     runnable = if (msg.role == Role.ASSISTANT) runnableBlocks(msg.content, state.termuxReady) else emptyList(),
-                    onRun = { vm.runCode(it.language, it.code) }
+                    onRun = { vm.runCode(it.language, it.code) },
+                    attachmentActions = attachmentActions
                 )
             }
             if (showStreamingItem) {
                 item(key = "streaming") {
-                    StreamingBubble(content = state.streamingContent, tools = state.tools)
+                    StreamingBubble(content = state.streamingContent, tools = state.tools, files = state.streamingFiles, attachmentActions = attachmentActions)
                 }
             }
         }
@@ -288,7 +290,8 @@ private fun MessageBubble(
     message: Message,
     showModel: Boolean,
     runnable: List<RunnableBlock>,
-    onRun: (RunnableBlock) -> Unit
+    onRun: (RunnableBlock) -> Unit,
+    attachmentActions: AttachmentActions
 ) {
     val isUser = message.role == Role.USER
     Row(
@@ -322,6 +325,7 @@ private fun MessageBubble(
                     )
                 }
             }
+            if (message.attachments.isNotEmpty()) AttachmentList(message.attachments, attachmentActions)
             if (runnable.isNotEmpty()) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     runnable.forEachIndexed { i, block ->
@@ -374,7 +378,7 @@ private fun ToolLog(entries: List<String>) {
 }
 
 @Composable
-private fun StreamingBubble(content: String, tools: List<ToolActivity>) {
+private fun StreamingBubble(content: String, tools: List<ToolActivity>, files: List<Attachment>, attachmentActions: AttachmentActions) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
         Avatar()
         Spacer(Modifier.width(8.dp))
@@ -396,6 +400,7 @@ private fun StreamingBubble(content: String, tools: List<ToolActivity>) {
                     )
                 }
             }
+            if (files.isNotEmpty()) AttachmentList(files, attachmentActions)
             Surface(
                 shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 4.dp, bottomEnd = 18.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant

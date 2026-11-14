@@ -9,13 +9,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val repository: SettingsRepository
+    private val repository: SettingsRepository,
+    providerRepository: com.hermes.agent.data.repository.ProviderRepository
 ) : ViewModel() {
+
+    val providers = providerRepository.observeAll()
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
 
     // Held locally so text fields update synchronously instead of round-tripping through DataStore.
     private val _settings = MutableStateFlow<AgentSettings?>(null)

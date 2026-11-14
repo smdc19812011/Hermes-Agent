@@ -38,13 +38,18 @@ class ToolRegistry @Inject constructor(
     usbStorage: UsbStorageTool,
     usbMidi: UsbMidiTool,
     usbDriverInstall: UsbDriverInstallTool,
-    usbDriverCommand: UsbDriverCommandTool
+    usbDriverCommand: UsbDriverCommandTool,
+    postFile: PostFileTool,
+    imageSearch: ImageSearchTool,
+    generateImage: GenerateImageTool,
+    textToSpeech: TextToSpeechTool
 ) {
     val all: List<AgentTool> = listOf(
         networkInfo, lanScan, portScan, dnsLookup, tcpPing, http, search,
         tcpSend, udpSend, wakeOnLan, listen,
         btStatus, btScan, bleRead, bleWrite, bleListen, btSerial,
         usbDevices, usbAccess, usbSerial, usbTransfer, usbHid, usbPrint, usbStorage, usbMidi, usbDriverInstall, usbDriverCommand,
+        postFile, imageSearch, generateImage, textToSpeech,
         shell, listTools, installTool
     )
 
