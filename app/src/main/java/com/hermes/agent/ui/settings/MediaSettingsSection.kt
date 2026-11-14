@@ -28,6 +28,30 @@ fun MediaSettingsSection(settings: AgentSettings, providers: List<Provider>, onC
         singleLine = true,
         modifier = Modifier.fillMaxWidth()
     )
+    Text(
+        "Vision reader: looks at images, PDF pages and video frames for chat models that can't. Automatic prefers a vision model you " +
+            "already use, then a free one on OpenRouter.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    ProviderPicker("Vision reader provider", settings.visionProviderId, providers.filter { !it.isHermes }) { id -> onChange { it.copy(visionProviderId = id) } }
+    OutlinedTextField(
+        value = settings.visionModel,
+        onValueChange = { v -> onChange { it.copy(visionModel = v.trim()) } },
+        label = { Text("Vision reader model") },
+        placeholder = { Text("Automatic, e.g. nvidia/nemotron-3.5-super-vl:free") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+    ProviderPicker("Speech-to-text provider", settings.sttProviderId, usable) { id -> onChange { it.copy(sttProviderId = id) } }
+    OutlinedTextField(
+        value = settings.sttModel,
+        onValueChange = { v -> onChange { it.copy(sttModel = v.trim()) } },
+        label = { Text("Speech-to-text model") },
+        placeholder = { Text("Automatic: whisper-1 (OpenAI) or whisper-large-v3 (Groq)") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
     ProviderPicker("Speech provider", settings.ttsProviderId, usable) { id -> onChange { it.copy(ttsProviderId = id) } }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(

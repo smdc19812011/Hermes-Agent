@@ -35,7 +35,9 @@ class SendMessageUseCase @Inject constructor(
     private val toolRegistry: ToolRegistry,
     private val approvals: ToolApprovals,
     private val toolLibrary: com.hermes.agent.data.toolbox.ToolLibraryRepository,
-    private val attachmentStore: com.hermes.agent.data.media.AttachmentStore
+    private val attachmentStore: com.hermes.agent.data.media.AttachmentStore,
+    private val mediaReader: com.hermes.agent.data.media.MediaReader,
+    private val modelCatalog: com.hermes.agent.data.repository.ModelCatalogRepository
 ) {
     operator fun invoke(
         conversation: Conversation,
@@ -84,14 +86,60 @@ class SendMessageUseCase @Inject constructor(
             }
         }
         val local = attachments.filter { !it.isRemote }.map { it to attachmentStore.file(it) }
-        fun newTurn(binary: Boolean): ChatTurn.User {
-            if (local.isEmpty()) return ChatTurn.User(userInput)
-            val enc = AttachmentEncoder.encode(local, binary, shellOn, ImageShrinker::shrink)
-            return ChatTurn.User(listOf(enc.note, userInput).filter { it.isNotBlank() }.joinToString("\n\n"), enc.parts)
+        val readings = mutableMapOf<String, Result<com.hermes.agent.data.media.Reading>>()
+
+        /** Has the reader look at a file once per message; the activity line shows the user what's happening. */
+        suspend fun readOnce(a: Attachment, f: java.io.File): Result<com.hermes.agent.data.media.Reading> = readings.getOrPut(a.uri) {
+            val activity = ToolActivity("read-${a.uri}", "read", "Reading ${a.name}", "👁", completed = false)
+            emit(StreamChunk.Tool(activity))
+            val r = runCatching { mediaReader.read(a, f) }
+            emit(StreamChunk.Tool(activity.copy(completed = true)))
+            r.onFailure { emit(StreamChunk.Notice("Couldn't read ${a.name}: ${it.message}")) }
+            r
         }
-        // Shrinking and base64-encoding images is too heavy for the main thread the chat collects on.
-        val richTurn = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { newTurn(binary = true) }
-        val baseTurns: List<ChatTurn> = pastTurns + richTurn
+
+        /**
+         * The new message for one model: files it can take go as binary parts, files it can't (images for text-only
+         * models, video, Office, archives) are read for it, and text files are inlined. [forceText] after a rejection.
+         */
+        suspend fun turnFor(provider: com.hermes.agent.domain.model.Provider, model: String, forceText: Boolean): ChatTurn.User {
+            if (local.isEmpty()) return ChatTurn.User(userInput)
+            val info = if (provider.type == com.hermes.agent.domain.model.ProviderType.OPENROUTER) {
+                runCatching { modelCatalog.cached(provider.type, provider.effectiveBaseUrl, provider.apiKey) }.getOrNull()?.firstOrNull { it.id == model }
+            } else null
+            val binary = mutableListOf<Pair<Attachment, java.io.File>>()
+            val toRead = mutableListOf<Pair<Attachment, java.io.File>>()
+            val rest = mutableListOf<Pair<Attachment, java.io.File>>()
+            val ext = { a: Attachment -> a.name.substringAfterLast('.', "").lowercase() }
+            for (item in local) {
+                val a = item.first
+                val directOk = !forceText
+                when {
+                    provider.isHermes && !forceText -> binary += item // Hermes routes media to its own vision tools
+                    a.kind == Attachment.Kind.IMAGE && a.mime != "image/svg+xml" ->
+                        if (directOk && info?.inputsImage != false) binary += item else toRead += item
+                    a.kind == Attachment.Kind.AUDIO ->
+                        if (directOk && info?.inputsAudio == true) binary += item else toRead += item
+                    a.mime == "application/pdf" -> if (directOk) binary += item else toRead += item
+                    a.kind == Attachment.Kind.VIDEO || ext(a) in setOf("docx", "pptx", "xlsx", "odt", "odp", "ods", "zip", "jar", "apk") -> toRead += item
+                    else -> rest += item
+                }
+            }
+            val sections = mutableListOf<String>()
+            for ((a, f) in toRead) {
+                readOnce(a, f).fold(
+                    { sections += "Contents of the attached file \"${a.name}\" (read for you by ${it.by}; treat it as what the file shows):\n${it.text}" },
+                    { rest += a to f }
+                )
+            }
+            // Shrinking and base64-encoding images is too heavy for the main thread the chat collects on.
+            val enc = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                AttachmentEncoder.encode(binary, binary = true, toolsCanOpen = shellOn, shrinkImage = ImageShrinker::shrink) to
+                    AttachmentEncoder.encode(rest, binary = false, toolsCanOpen = shellOn, shrinkImage = ImageShrinker::shrink)
+            }
+            val text = (sections + enc.first.note + enc.second.note + userInput).filter { it.isNotBlank() }.joinToString("\n\n")
+            return ChatTurn.User(text, enc.first.parts)
+        }
         val toolContext = ToolContext(conversation.id, settings.deviceAccess)
         val installed = if (com.hermes.agent.domain.tools.Capability.SHELL in settings.deviceAccess) toolLibrary.installedNames() else emptyList()
         var lastError = "unknown error"
@@ -100,7 +148,11 @@ class SendMessageUseCase @Inject constructor(
             emit(StreamChunk.ProviderSelected(provider.id, provider.name, model))
             // Hermes brings its own tools; the app's tools are for direct model providers.
             var tools = if (provider.isHermes) emptyList() else toolRegistry.enabled(settings.deviceAccess)
-            val attempt = Attempt(baseTurns.toMutableList())
+            val attempt = Attempt((pastTurns + turnFor(provider, model, forceText = false)).toMutableList())
+            readings.forEach { (uri, r) ->
+                val name = local.firstOrNull { it.first.uri == uri }?.first?.name ?: return@forEach
+                attempt.log["read-$uri"] = ToolActivity("read-$uri", "read", r.fold({ "Read $name with ${it.by}" }, { "Couldn't read $name" }), "👁", true)
+            }
             val startMs = System.currentTimeMillis()
             try {
                 var round = 0
@@ -111,8 +163,8 @@ class SendMessageUseCase @Inject constructor(
                         // A model without vision/file input: send the attachments as descriptions instead.
                         val newest = attempt.turns.lastOrNull { it is ChatTurn.User } as? ChatTurn.User
                         if (e !is CancellationException && !attempt.toolsRan && newest?.parts?.isNotEmpty() == true && looksLikeNoMediaSupport(e)) {
-                            attempt.turns[attempt.turns.lastIndexOf(newest)] = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { newTurn(binary = false) }
-                            emit(StreamChunk.Notice("$model can't read images or files directly, so it got descriptions of your attachments instead."))
+                            attempt.turns[attempt.turns.lastIndexOf(newest)] = turnFor(provider, model, forceText = true)
+                            emit(StreamChunk.Notice("$model can't take images or files directly, so they were read for it."))
                             continue
                         }
                         // Many models reject the tools field outright; answer without device access rather than fail.

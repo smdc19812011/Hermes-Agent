@@ -33,6 +33,10 @@ class SettingsRepository @Inject constructor(
         val TTS_PROVIDER = stringPreferencesKey("tts_provider")
         val TTS_MODEL = stringPreferencesKey("tts_model")
         val TTS_VOICE = stringPreferencesKey("tts_voice")
+        val VISION_PROVIDER = stringPreferencesKey("vision_provider")
+        val VISION_MODEL = stringPreferencesKey("vision_model")
+        val STT_PROVIDER = stringPreferencesKey("stt_provider")
+        val STT_MODEL = stringPreferencesKey("stt_model")
     }
 
     val settings: Flow<AgentSettings> = context.dataStore.data.map { prefs ->
@@ -52,7 +56,11 @@ class SettingsRepository @Inject constructor(
             imageModel = prefs[Keys.IMAGE_MODEL].orEmpty(),
             ttsProviderId = prefs[Keys.TTS_PROVIDER].orEmpty(),
             ttsModel = prefs[Keys.TTS_MODEL].orEmpty(),
-            ttsVoice = prefs[Keys.TTS_VOICE].orEmpty()
+            ttsVoice = prefs[Keys.TTS_VOICE].orEmpty(),
+            visionProviderId = prefs[Keys.VISION_PROVIDER].orEmpty(),
+            visionModel = prefs[Keys.VISION_MODEL].orEmpty(),
+            sttProviderId = prefs[Keys.STT_PROVIDER].orEmpty(),
+            sttModel = prefs[Keys.STT_MODEL].orEmpty()
         )
     }
 
@@ -72,6 +80,10 @@ class SettingsRepository @Inject constructor(
             prefs[Keys.TTS_PROVIDER] = settings.ttsProviderId
             prefs[Keys.TTS_MODEL] = settings.ttsModel
             prefs[Keys.TTS_VOICE] = settings.ttsVoice
+            prefs[Keys.VISION_PROVIDER] = settings.visionProviderId
+            prefs[Keys.VISION_MODEL] = settings.visionModel
+            prefs[Keys.STT_PROVIDER] = settings.sttProviderId
+            prefs[Keys.STT_MODEL] = settings.sttModel
         }
     }
 

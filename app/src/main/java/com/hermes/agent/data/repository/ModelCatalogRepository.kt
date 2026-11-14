@@ -15,7 +15,18 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /** [supportsTools] is null when the provider doesn't say (only OpenRouter publishes it). */
-data class ModelInfo(val id: String, val label: String?, val contextLength: Int?, val supportsTools: Boolean? = null, val outputsImage: Boolean = false)
+data class ModelInfo(
+    val id: String,
+    val label: String?,
+    val contextLength: Int?,
+    val supportsTools: Boolean? = null,
+    val outputsImage: Boolean = false,
+    /** Null when the provider doesn't publish input modalities (only OpenRouter does). */
+    val inputsImage: Boolean? = null,
+    val inputsAudio: Boolean? = null,
+    /** Price per prompt token in USD; 0 for free models, null when unknown. */
+    val promptPrice: Double? = null
+)
 
 @Singleton
 class ModelCatalogRepository @Inject constructor(
@@ -23,6 +34,15 @@ class ModelCatalogRepository @Inject constructor(
 ) {
     /** OpenRouter publishes its catalog without a key; everyone else needs one (custom endpoints may not). */
     fun canFetchWithoutKey(type: ProviderType) = type == ProviderType.OPENROUTER || type == ProviderType.CUSTOM
+
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<ModelInfo>>>()
+
+    /** Like [fetch], but reuses a list fetched in the last hour; used on every message, so it must be cheap. */
+    suspend fun cached(type: ProviderType, baseUrl: String, apiKey: String): List<ModelInfo> {
+        val key = "$type|${baseUrl.trimEnd('/')}"
+        cache[key]?.takeIf { System.currentTimeMillis() - it.first < 3_600_000 }?.let { return it.second }
+        return fetch(type, baseUrl, apiKey, includeNonChat = true).also { cache[key] = System.currentTimeMillis() to it }
+    }
 
     suspend fun fetch(type: ProviderType, baseUrl: String, apiKey: String, includeNonChat: Boolean = false): List<ModelInfo> = withContext(Dispatchers.IO) {
         val base = baseUrl.trim().trimEnd('/')
@@ -78,7 +98,12 @@ class ModelCatalogRepository @Inject constructor(
                     contextLength = o.get("context_length")?.takeIf { it.isJsonPrimitive }?.asInt,
                     supportsTools = o.getAsJsonArray("supported_parameters")?.any { it.isJsonPrimitive && it.asString == "tools" },
                     outputsImage = o.getAsJsonObject("architecture")?.getAsJsonArray("output_modalities")
-                        ?.any { it.isJsonPrimitive && it.asString == "image" } == true
+                        ?.any { it.isJsonPrimitive && it.asString == "image" } == true,
+                    inputsImage = o.getAsJsonObject("architecture")?.getAsJsonArray("input_modalities")
+                        ?.any { it.isJsonPrimitive && it.asString == "image" },
+                    inputsAudio = o.getAsJsonObject("architecture")?.getAsJsonArray("input_modalities")
+                        ?.any { it.isJsonPrimitive && it.asString == "audio" },
+                    promptPrice = o.getAsJsonObject("pricing")?.get("prompt")?.takeIf { it.isJsonPrimitive }?.asString?.toDoubleOrNull()
                 ).takeIf { includeNonChat || o.str("type")?.lowercase() !in NON_CHAT_TYPES }
             }
         }

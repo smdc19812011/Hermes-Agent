@@ -43,14 +43,15 @@ class ToolRegistry @Inject constructor(
     imageSearch: ImageSearchTool,
     generateImage: GenerateImageTool,
     textToSpeech: TextToSpeechTool,
-    useAttachment: UseAttachmentTool
+    useAttachment: UseAttachmentTool,
+    readAttachment: ReadAttachmentTool
 ) {
     val all: List<AgentTool> = listOf(
         networkInfo, lanScan, portScan, dnsLookup, tcpPing, http, search,
         tcpSend, udpSend, wakeOnLan, listen,
         btStatus, btScan, bleRead, bleWrite, bleListen, btSerial,
         usbDevices, usbAccess, usbSerial, usbTransfer, usbHid, usbPrint, usbStorage, usbMidi, usbDriverInstall, usbDriverCommand,
-        postFile, imageSearch, generateImage, textToSpeech,
+        postFile, imageSearch, generateImage, textToSpeech, readAttachment,
         shell, listTools, installTool, useAttachment
     )
 

@@ -16,7 +16,12 @@ data class AgentSettings(
     val imageModel: String = "",
     val ttsProviderId: String = "",
     val ttsModel: String = "",
-    val ttsVoice: String = ""
+    val ttsVoice: String = "",
+    /** Reads attachments for models that can't see them. Blank = automatic. */
+    val visionProviderId: String = "",
+    val visionModel: String = "",
+    val sttProviderId: String = "",
+    val sttModel: String = ""
 )
 
 enum class AppTheme { SYSTEM, LIGHT, DARK }
