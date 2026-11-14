@@ -1,5 +1,8 @@
 package com.hermes.agent.ui.chat
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -62,6 +65,13 @@ fun ChatScreen(
 
     val state by vm.state.collectAsStateWithLifecycle()
     val attachmentActions = remember(vm) { AttachmentActions(vm::fileOf, vm::saveAttachment, vm::shareAttachment) }
+    val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { vm.attach(it) }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { vm.attach(it) }
+    var cameraFile by remember { mutableStateOf<java.io.File?>(null) }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+        cameraFile?.let { vm.attachPhoto(it, taken) }
+        cameraFile = null
+    }
     val listState = rememberLazyListState()
     var inputText by remember { mutableStateOf("") }
     var showRoutingMenu by remember { mutableStateOf(false) }
@@ -151,13 +161,23 @@ fun ChatScreen(
                     value = inputText,
                     onValueChange = { inputText = it },
                     onSend = {
-                        if (inputText.isNotBlank()) {
+                        if (inputText.isNotBlank() || state.pending.isNotEmpty()) {
                             vm.send(inputText)
                             inputText = ""
                         }
                     },
                     onStop = vm::stop,
-                    isLoading = state.isLoading
+                    isLoading = state.isLoading,
+                    pending = state.pending,
+                    importing = state.importing,
+                    onRemovePending = vm::removePending,
+                    onPickMedia = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
+                    onPickFile = { filePicker.launch(arrayOf("*/*")) },
+                    onTakePhoto = {
+                        val (file, uri) = vm.cameraTarget()
+                        cameraFile = file
+                        camera.launch(uri)
+                    }
                 )
             }
         }
@@ -240,34 +260,85 @@ private fun ChatInput(
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
-    isLoading: Boolean
+    isLoading: Boolean,
+    pending: List<Attachment>,
+    importing: Boolean,
+    onRemovePending: (Attachment) -> Unit,
+    onPickMedia: () -> Unit,
+    onPickFile: () -> Unit,
+    onTakePhoto: () -> Unit
 ) {
+    var menu by remember { mutableStateOf(false) }
     Surface(tonalElevation = 2.dp, shadowElevation = 8.dp) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .imePadding()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Message…") },
-                maxLines = 6,
-                shape = RoundedCornerShape(24.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            if (isLoading) {
-                FilledTonalIconButton(onClick = onStop) { Icon(Icons.Default.Stop, "Stop generating") }
-            } else {
-                FilledIconButton(onClick = onSend, enabled = value.isNotBlank()) {
-                    Icon(Icons.AutoMirrored.Filled.Send, "Send")
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding()) {
+            if (pending.isNotEmpty() || importing) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    pending.forEach { a -> PendingChip(a, onRemove = { onRemovePending(a) }) }
+                    if (importing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                Box {
+                    IconButton(onClick = { menu = true }, enabled = !isLoading) { Icon(Icons.Default.Add, "Attach") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Photo or video") }, leadingIcon = { Icon(Icons.Default.PhotoLibrary, null) },
+                            onClick = { menu = false; onPickMedia() })
+                        DropdownMenuItem(text = { Text("Take photo") }, leadingIcon = { Icon(Icons.Default.PhotoCamera, null) },
+                            onClick = { menu = false; onTakePhoto() })
+                        DropdownMenuItem(text = { Text("File") }, leadingIcon = { Icon(Icons.Default.AttachFile, null) },
+                            onClick = { menu = false; onPickFile() })
+                    }
+                }
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text(if (pending.isEmpty()) "Message…" else "Add a message (optional)") },
+                    maxLines = 6,
+                    shape = RoundedCornerShape(24.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                if (isLoading) {
+                    FilledTonalIconButton(onClick = onStop) { Icon(Icons.Default.Stop, "Stop generating") }
+                } else {
+                    FilledIconButton(onClick = onSend, enabled = !importing && (value.isNotBlank() || pending.isNotEmpty())) {
+                        Icon(Icons.AutoMirrored.Filled.Send, "Send")
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PendingChip(a: Attachment, onRemove: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Box {
+        Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+            if (a.kind == Attachment.Kind.IMAGE || a.kind == Attachment.Kind.VIDEO) {
+                coil.compose.AsyncImage(
+                    model = java.io.File(context.filesDir, a.uri), contentDescription = a.name,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.size(64.dp)
+                )
+            } else {
+                Column(Modifier.size(width = 120.dp, height = 64.dp).padding(8.dp), verticalArrangement = Arrangement.Center) {
+                    Icon(if (a.kind == Attachment.Kind.AUDIO) Icons.Default.AudioFile else Icons.Default.Description, null, Modifier.size(18.dp))
+                    Text(a.name, style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+        Box(
+            Modifier.align(Alignment.TopEnd).padding(2.dp).size(22.dp).clip(RoundedCornerShape(50))
+                .background(MaterialTheme.colorScheme.inverseSurface).clickable(onClick = onRemove),
+            contentAlignment = Alignment.Center
+        ) { Icon(Icons.Default.Close, "Remove ${a.name}", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.inverseOnSurface) }
     }
 }
 
@@ -308,7 +379,7 @@ private fun MessageBubble(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             if (message.toolLog.isNotEmpty()) ToolLog(message.toolLog)
-            Surface(
+            if (message.content.isNotBlank() || message.attachments.isEmpty()) Surface(
                 shape = RoundedCornerShape(
                     topStart = 18.dp, topEnd = 18.dp,
                     bottomStart = if (isUser) 18.dp else 4.dp,

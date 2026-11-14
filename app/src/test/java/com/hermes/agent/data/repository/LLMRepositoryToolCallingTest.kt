@@ -173,4 +173,40 @@ class LLMRepositoryToolCallingTest {
         stream(ProviderType.OPENROUTER, listOf(ChatTurn.User("hi")), tools = emptyList())
         assertFalse(lastRequestJson().has("modalities"))
     }
+
+    @Test
+    fun openAiSendsImagesFilesAndAudioAsContentParts() {
+        server.enqueue(sse(null to """{"choices":[{"delta":{"content":"A cat."}}]}""", null to "[DONE]"))
+        val parts = listOf(
+            InputPart.Image("image/jpeg", "AAAA"),
+            InputPart.Document("r.pdf", "application/pdf", "JVBE"),
+            InputPart.Audio("mp3", "SUQz")
+        )
+        stream(ProviderType.OPENROUTER, listOf(ChatTurn.User("What is this?", parts)), tools = emptyList())
+        val content = lastRequestJson().getAsJsonArray("messages").last().asJsonObject.getAsJsonArray("content")
+        assertEquals(listOf("image_url", "file", "input_audio", "text"), content.map { it.asJsonObject.get("type").asString })
+        assertEquals("data:image/jpeg;base64,AAAA", content[0].asJsonObject.getAsJsonObject("image_url").get("url").asString)
+        assertEquals("data:application/pdf;base64,JVBE", content[1].asJsonObject.getAsJsonObject("file").get("file_data").asString)
+        assertEquals("mp3", content[2].asJsonObject.getAsJsonObject("input_audio").get("format").asString)
+        assertEquals("What is this?", content[3].asJsonObject.get("text").asString)
+    }
+
+    @Test
+    fun anthropicSendsImageAndDocumentBlocks() {
+        server.enqueue(sse("message_stop" to """{"type":"message_stop"}"""))
+        stream(ProviderType.ANTHROPIC, listOf(ChatTurn.User("", listOf(InputPart.Image("image/png", "iVBO"), InputPart.Document("a.pdf", "application/pdf", "JVBE")))), tools = emptyList())
+        val content = lastRequestJson().getAsJsonArray("messages")[0].asJsonObject.getAsJsonArray("content")
+        assertEquals(listOf("image", "document", "text"), content.map { it.asJsonObject.get("type").asString })
+        val src = content[0].asJsonObject.getAsJsonObject("source")
+        assertEquals("base64", src.get("type").asString)
+        assertEquals("image/png", src.get("media_type").asString)
+        assertEquals("iVBO", src.get("data").asString)
+    }
+
+    @Test
+    fun plainTextStaysAPlainString() {
+        server.enqueue(sse(null to """{"choices":[{"delta":{"content":"hi"}}]}""", null to "[DONE]"))
+        stream(ProviderType.OPENAI, listOf(ChatTurn.User("hello")), tools = emptyList())
+        assertTrue(lastRequestJson().getAsJsonArray("messages").last().asJsonObject.get("content").isJsonPrimitive)
+    }
 }

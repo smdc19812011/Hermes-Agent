@@ -7,6 +7,7 @@ import com.google.gson.JsonParser
 import com.hermes.agent.domain.model.*
 import com.hermes.agent.domain.tools.AgentTool
 import com.hermes.agent.domain.tools.ChatTurn
+import com.hermes.agent.domain.tools.InputPart
 import com.hermes.agent.domain.tools.ToolCall
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -99,7 +100,7 @@ class LLMRepository @Inject constructor(
             if (!systemPrompt.isNullOrBlank()) add(obj("role" to "system", "content" to systemPrompt))
             sent.forEach { turn ->
                 when (turn) {
-                    is ChatTurn.User -> add(obj("role" to "user", "content" to turn.text))
+                    is ChatTurn.User -> add(JsonObject().apply { addProperty("role", "user"); add("content", openAIUserContent(turn)) })
                     is ChatTurn.Assistant -> add(JsonObject().apply {
                         addProperty("role", "assistant")
                         if (turn.text.isNotEmpty() || turn.toolCalls.isEmpty()) addProperty("content", turn.text) else add("content", null)
@@ -151,6 +152,51 @@ class LLMRepository @Inject constructor(
             }
             .post(body.toString().toRequestBody(JSON))
             .build()
+    }
+
+    /** Plain string when there's nothing but text; otherwise OpenAI content parts (also read by OpenRouter and Hermes). */
+    private fun openAIUserContent(turn: ChatTurn.User): com.google.gson.JsonElement {
+        if (turn.parts.isEmpty()) return com.google.gson.JsonPrimitive(turn.text)
+        return JsonArray().apply {
+            turn.parts.forEach { part ->
+                add(when (part) {
+                    is InputPart.Image -> JsonObject().apply {
+                        addProperty("type", "image_url")
+                        add("image_url", obj("url" to "data:${part.mime};base64,${part.base64}"))
+                    }
+                    is InputPart.Document -> JsonObject().apply {
+                        addProperty("type", "file")
+                        add("file", obj("filename" to part.name, "file_data" to "data:${part.mime};base64,${part.base64}"))
+                    }
+                    is InputPart.Audio -> JsonObject().apply {
+                        addProperty("type", "input_audio")
+                        add("input_audio", obj("data" to part.base64, "format" to part.format))
+                    }
+                })
+            }
+            if (turn.text.isNotBlank()) add(obj("type" to "text", "text" to turn.text))
+        }
+    }
+
+    /** Anthropic content blocks: images and PDFs as base64 sources; audio isn't accepted, so it's described in text upstream. */
+    private fun anthropicUserContent(turn: ChatTurn.User): com.google.gson.JsonElement {
+        if (turn.parts.isEmpty()) return com.google.gson.JsonPrimitive(turn.text)
+        return JsonArray().apply {
+            turn.parts.forEach { part ->
+                when (part) {
+                    is InputPart.Image -> add(JsonObject().apply {
+                        addProperty("type", "image")
+                        add("source", obj("type" to "base64", "media_type" to part.mime, "data" to part.base64))
+                    })
+                    is InputPart.Document -> add(JsonObject().apply {
+                        addProperty("type", "document")
+                        add("source", obj("type" to "base64", "media_type" to part.mime, "data" to part.base64))
+                    })
+                    is InputPart.Audio -> Unit
+                }
+            }
+            add(obj("type" to "text", "text" to turn.text.ifBlank { "(see attachment)" }))
+        }
     }
 
     private inner class OpenAIParser : StreamParser {
@@ -209,7 +255,7 @@ class LLMRepository @Inject constructor(
         }
         turns.forEach { turn ->
             when (turn) {
-                is ChatTurn.User -> { flushResults(); messages.add(obj("role" to "user", "content" to turn.text)) }
+                is ChatTurn.User -> { flushResults(); messages.add(JsonObject().apply { addProperty("role", "user"); add("content", anthropicUserContent(turn)) }) }
                 is ChatTurn.Assistant -> {
                     flushResults()
                     messages.add(JsonObject().apply {

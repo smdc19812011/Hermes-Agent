@@ -36,6 +36,9 @@ data class ChatUiState(
     val codeRun: CodeRun? = null,
     /** Files posted during the reply being streamed. */
     val streamingFiles: List<Attachment> = emptyList(),
+    /** Files picked with + and not sent yet. */
+    val pending: List<Attachment> = emptyList(),
+    val importing: Boolean = false,
     val termuxReady: Boolean = false
 )
 
@@ -80,13 +83,14 @@ class ChatViewModel @Inject constructor(
 
     fun send(input: String) {
         val conversation = _state.value.conversation ?: return
-        if (_state.value.isLoading || input.isBlank()) return
+        val files = _state.value.pending
+        if (_state.value.isLoading || _state.value.importing || (input.isBlank() && files.isEmpty())) return
 
-        _state.update { it.copy(isLoading = true, streamingContent = "", tools = emptyList(), approval = null, notice = null, streamingFiles = emptyList()) }
+        _state.update { it.copy(isLoading = true, streamingContent = "", tools = emptyList(), approval = null, notice = null, streamingFiles = emptyList(), pending = emptyList()) }
         val history = _state.value.messages
 
         sendJob = viewModelScope.launch {
-            sendMessageUseCase(conversation, input.trim(), history)
+            sendMessageUseCase(conversation, input.trim(), history, files)
                 .catch { e -> _state.update { it.copy(notice = e.message ?: "Request failed") } }
                 .onCompletion {
                     _state.update { it.copy(isLoading = false, streamingContent = "", tools = emptyList(), approval = null, streamingFiles = emptyList()) }
@@ -178,6 +182,38 @@ class ChatViewModel @Inject constructor(
     }
 
     fun fileOf(a: Attachment): java.io.File = attachmentStore.file(a)
+
+    fun attach(uris: List<android.net.Uri>) {
+        val conv = _state.value.conversation?.id ?: return
+        if (uris.isEmpty()) return
+        _state.update { it.copy(importing = true) }
+        viewModelScope.launch {
+            val added = mutableListOf<Attachment>()
+            var failed: String? = null
+            uris.take(10).forEach { uri ->
+                runCatching { attachmentStore.importUri(conv, uri) }.onSuccess { added += it }.onFailure { failed = it.message }
+            }
+            _state.update { it.copy(importing = false, pending = it.pending + added, notice = failed?.let { m -> "Couldn't attach a file: $m" } ?: it.notice) }
+        }
+    }
+
+    fun cameraTarget(): Pair<java.io.File, android.net.Uri> = attachmentStore.cameraTarget()
+
+    /** The camera wrote into [file]; move it into the chat like any other pick. */
+    fun attachPhoto(file: java.io.File, taken: Boolean) {
+        if (!taken || !file.exists() || file.length() == 0L) { file.delete(); return }
+        val conv = _state.value.conversation?.id ?: return
+        viewModelScope.launch {
+            val a = runCatching { file.inputStream().use { attachmentStore.saveStream(conv, file.name, it, "image/jpeg") } }.getOrNull()
+            file.delete()
+            a?.let { att -> _state.update { it.copy(pending = it.pending + att) } }
+        }
+    }
+
+    fun removePending(a: Attachment) {
+        _state.update { it.copy(pending = it.pending - a) }
+        runCatching { attachmentStore.file(a).delete() }
+    }
 
     fun stop() {
         sendJob?.cancel()

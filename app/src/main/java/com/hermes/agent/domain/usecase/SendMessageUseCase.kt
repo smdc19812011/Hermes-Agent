@@ -12,6 +12,8 @@ import com.hermes.agent.data.tools.ToolRegistry
 import com.hermes.agent.domain.model.*
 import com.hermes.agent.domain.tools.AgentTool
 import com.hermes.agent.domain.tools.ChatTurn
+import com.hermes.agent.data.media.AttachmentEncoder
+import com.hermes.agent.data.media.ImageShrinker
 import com.hermes.agent.domain.tools.ToolCall
 import com.hermes.agent.domain.tools.ToolContext
 import kotlinx.coroutines.CancellationException
@@ -38,15 +40,17 @@ class SendMessageUseCase @Inject constructor(
     operator fun invoke(
         conversation: Conversation,
         userInput: String,
-        history: List<Message>
+        history: List<Message>,
+        attachments: List<Attachment> = emptyList()
     ): Flow<StreamChunk> = flow {
         val settings = settingsRepository.settings.first()
 
-        val userMessage = Message(conversationId = conversation.id, role = Role.USER, content = userInput)
+        val userMessage = Message(conversationId = conversation.id, role = Role.USER, content = userInput, attachments = attachments)
         conversationRepository.insertMessage(userMessage)
 
         if (history.isEmpty() && conversation.title == Conversation.DEFAULT_TITLE) {
-            conversationRepository.updateTitle(conversation.id, userInput.lineSequence().first().take(50).trim())
+            val title = userInput.lineSequence().firstOrNull()?.take(50)?.trim().orEmpty().ifBlank { attachments.firstOrNull()?.name ?: "Attachment" }
+            conversationRepository.updateTitle(conversation.id, title)
         }
 
         val baseSystemPrompt: String? = when (conversation.unrestrictedMode) {
@@ -67,13 +71,27 @@ class SendMessageUseCase @Inject constructor(
             return@flow
         }
 
-        val baseTurns: List<ChatTurn> = history.mapNotNull {
+        val shellOn = com.hermes.agent.domain.tools.Capability.SHELL in settings.deviceAccess
+        // Only the new message carries file contents; earlier attachments are named so the model knows they exist.
+        val pastTurns: List<ChatTurn> = history.mapNotNull {
             when (it.role) {
-                Role.USER -> ChatTurn.User(it.content)
+                Role.USER -> ChatTurn.User(
+                    listOf(it.content, it.attachments.takeIf { a -> a.isNotEmpty() }?.joinToString(prefix = "[Earlier attachments: ", postfix = "]") { a -> a.name })
+                        .filter { s -> !s.isNullOrBlank() }.joinToString("\n")
+                )
                 Role.ASSISTANT -> ChatTurn.Assistant(it.content)
                 else -> null
             }
-        } + ChatTurn.User(userInput)
+        }
+        val local = attachments.filter { !it.isRemote }.map { it to attachmentStore.file(it) }
+        fun newTurn(binary: Boolean): ChatTurn.User {
+            if (local.isEmpty()) return ChatTurn.User(userInput)
+            val enc = AttachmentEncoder.encode(local, binary, shellOn, ImageShrinker::shrink)
+            return ChatTurn.User(listOf(enc.note, userInput).filter { it.isNotBlank() }.joinToString("\n\n"), enc.parts)
+        }
+        // Shrinking and base64-encoding images is too heavy for the main thread the chat collects on.
+        val richTurn = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { newTurn(binary = true) }
+        val baseTurns: List<ChatTurn> = pastTurns + richTurn
         val toolContext = ToolContext(conversation.id, settings.deviceAccess)
         val installed = if (com.hermes.agent.domain.tools.Capability.SHELL in settings.deviceAccess) toolLibrary.installedNames() else emptyList()
         var lastError = "unknown error"
@@ -90,6 +108,13 @@ class SendMessageUseCase @Inject constructor(
                     val calls = try {
                         streamRound(provider, model, attempt, systemPrompt(baseSystemPrompt, conversation, tools, installed), tools, settings, conversation.id)
                     } catch (e: Exception) {
+                        // A model without vision/file input: send the attachments as descriptions instead.
+                        val newest = attempt.turns.lastOrNull { it is ChatTurn.User } as? ChatTurn.User
+                        if (e !is CancellationException && !attempt.toolsRan && newest?.parts?.isNotEmpty() == true && looksLikeNoMediaSupport(e)) {
+                            attempt.turns[attempt.turns.lastIndexOf(newest)] = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { newTurn(binary = false) }
+                            emit(StreamChunk.Notice("$model can't read images or files directly, so it got descriptions of your attachments instead."))
+                            continue
+                        }
                         // Many models reject the tools field outright; answer without device access rather than fail.
                         if (e is CancellationException || tools.isEmpty() || attempt.toolsRan || !looksLikeNoToolSupport(e)) throw e
                         tools = emptyList()
@@ -253,6 +278,12 @@ class SendMessageUseCase @Inject constructor(
             (if (tools.any { it.name == "post_file" }) " To show the user an image, video, audio or any file, post it with post_file, generate_image or text_to_speech; " +
                 "you can build media in Termux (ffmpeg, ImageMagick, Python) and post the result." else "")
         return listOfNotNull(base, note).joinToString("\n\n")
+    }
+
+    private fun looksLikeNoMediaSupport(e: Exception): Boolean {
+        val m = e.message?.lowercase() ?: return false
+        val media = listOf("image", "vision", "multimodal", "file", "pdf", "audio", "input").any { it in m }
+        return media && listOf("support", "not allowed", "invalid", "no endpoints", "unsupported").any { it in m }
     }
 
     private fun looksLikeNoToolSupport(e: Exception): Boolean {

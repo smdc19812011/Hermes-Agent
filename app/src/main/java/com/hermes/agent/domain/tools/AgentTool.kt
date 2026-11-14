@@ -39,9 +39,16 @@ data class ToolContext(
 
 data class ToolCall(val id: String, val name: String, val arguments: String)
 
+/** Binary input a model can read directly, already base64-encoded. */
+sealed class InputPart {
+    data class Image(val mime: String, val base64: String) : InputPart()
+    data class Document(val name: String, val mime: String, val base64: String) : InputPart()
+    data class Audio(val format: String, val base64: String) : InputPart()
+}
+
 /** Provider-neutral transcript used inside one tool-using turn. */
 sealed class ChatTurn {
-    data class User(val text: String) : ChatTurn()
+    data class User(val text: String, val parts: List<InputPart> = emptyList()) : ChatTurn()
     data class Assistant(val text: String, val toolCalls: List<ToolCall> = emptyList()) : ChatTurn()
     data class ToolResult(val callId: String, val name: String, val content: String) : ChatTurn()
 }

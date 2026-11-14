@@ -21,6 +21,8 @@ import javax.inject.Singleton
 const val MAX_ATTACHMENT_BYTES = 100L * 1024 * 1024
 /** Termux returns at most 100 KB of stdout per call; 36 KB raw = 48 KB base64 keeps a wide margin. */
 const val TERMUX_CHUNK_BYTES = 36 * 1024
+/** Pushes travel inside the intent (binder limit ~1 MB, strings count twice): 96 KB raw = 128 KB base64. */
+const val PUSH_CHUNK_BYTES = 96 * 1024
 
 /** Files posted in chats, kept under files/attachments/<conversation>/. */
 @Singleton
@@ -94,6 +96,48 @@ class AttachmentStore @Inject constructor(
         }
     }
 
+    /** Copies something the user picked (gallery, camera, files) into the chat. */
+    suspend fun importUri(conversationId: String, uri: Uri): Attachment = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val name = resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "attachment"
+        val input = resolver.openInputStream(uri) ?: error("Couldn't read the selected file.")
+        input.use { saveStream(conversationId, name, it, resolver.getType(uri)) }
+    }
+
+    /** A file the camera can write into, shared through the FileProvider. */
+    fun cameraTarget(): Pair<File, Uri> {
+        val f = File(context.filesDir, "attachments/camera/photo-${System.currentTimeMillis()}.jpg").apply { parentFile?.mkdirs() }
+        return f to FileProvider.getUriForFile(context, "${context.packageName}.files", f)
+    }
+
+    /** Copies an attachment into Termux (base64 heredoc chunks under the intent size limit); returns the Termux path. */
+    suspend fun pushToTermux(a: Attachment, destination: String): String {
+        if (!termux.isInstalled() || !termux.hasPermission()) error("Termux isn't set up. Finish steps 1-3 on the Agent runtime screen.")
+        val q = MediaScripts.quotePath(destination)
+        val file = file(a)
+        withContext(Dispatchers.IO) {
+            file.inputStream().use { input ->
+                val buf = ByteArray(PUSH_CHUNK_BYTES)
+                var first = true
+                while (true) {
+                    // Fill the buffer fully (readNBytes needs Android 13+).
+                    var n = 0
+                    while (n < buf.size) { val k = input.read(buf, n, buf.size - n); if (k < 0) break; n += k }
+                    if (n <= 0 && !first) break
+                    val b64 = Base64.getEncoder().encodeToString(buf.copyOf(maxOf(n, 0)))
+                    val r = termux.run(MediaScripts.appendChunk(q, b64, first), "Copy ${a.name} to Termux", 30_000)
+                    r.termuxError?.let { error(it) }
+                    check(r.exitCode == 0) { "Copying into Termux failed: ${r.stderr.take(200)}" }
+                    first = false
+                    if (n < buf.size) break
+                }
+            }
+        }
+        return destination
+    }
+
     private suspend fun save(conversationId: String, name: String, mime: String?, caption: String, write: suspend (File) -> Unit): Attachment =
         withContext(Dispatchers.IO) {
             val safeName = name.replace(Regex("[^A-Za-z0-9._ -]"), "_").take(80).ifBlank { "file" }
@@ -131,6 +175,14 @@ object MediaScripts {
     /** One chunk as unwrapped base64, stderr silenced so all 100 KB of the result goes to stdout. */
     fun chunk(quoted: String, index: Long, chunkBytes: Int) =
         "dd if=$quoted bs=$chunkBytes skip=$index count=1 2>/dev/null | base64 -w0"
+
+    /** Writes (first) or appends one base64 chunk to [quoted] via a quoted heredoc. */
+    fun appendChunk(quoted: String, base64: String, first: Boolean) = listOf(
+        "mkdir -p \"\$(dirname $quoted)\"",
+        "base64 -d ${if (first) ">" else ">>"} $quoted <<'HERMES_B64_EOF'",
+        base64,
+        "HERMES_B64_EOF"
+    ).joinToString("\n")
 
     /** Writes speech to [path] with espeak; exit 127 when espeak isn't installed. */
     fun espeak(text: String, voice: String?, path: String): String {
