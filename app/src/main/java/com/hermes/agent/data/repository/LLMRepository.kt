@@ -62,11 +62,13 @@ class LLMRepository @Inject constructor(
         systemPrompt: String?,
         tools: List<AgentTool>,
         timeoutSeconds: Int,
-        sessionId: String
+        sessionId: String,
+        /** Keeps the tool list (history refers to it) but tells the model to answer in text, not call another tool. */
+        finalAnswer: Boolean = false
     ): Flow<StreamEvent> {
         val (request, parser) = when (provider.apiMode) {
-            ApiMode.OPENAI_COMPATIBLE -> openAIRequest(provider, model, turns, systemPrompt, tools, sessionId) to OpenAIParser()
-            ApiMode.ANTHROPIC -> anthropicRequest(provider, model, turns, systemPrompt, tools) to AnthropicParser()
+            ApiMode.OPENAI_COMPATIBLE -> openAIRequest(provider, model, turns, systemPrompt, tools, sessionId, finalAnswer) to OpenAIParser()
+            ApiMode.ANTHROPIC -> anthropicRequest(provider, model, turns, systemPrompt, tools, finalAnswer) to AnthropicParser()
         }
         // Agent turns can run for minutes; servers send keepalives, so the read timeout only trips on a dead link.
         val client = okHttpClient.newBuilder().readTimeout(timeoutSeconds.toLong(), TimeUnit.SECONDS).build()
@@ -93,7 +95,8 @@ class LLMRepository @Inject constructor(
         turns: List<ChatTurn>,
         systemPrompt: String?,
         tools: List<AgentTool>,
-        sessionId: String
+        sessionId: String,
+        finalAnswer: Boolean = false
     ): Request {
         val sent = if (provider.isHermes) turns.filterIsInstance<ChatTurn.User>().takeLast(1) else turns
         val messages = JsonArray().apply {
@@ -138,6 +141,7 @@ class LLMRepository @Inject constructor(
                     })
                 }
             })
+            if (finalAnswer && tools.isNotEmpty()) addProperty("tool_choice", "none")
         }
         return Request.Builder()
             .url("${provider.effectiveBaseUrl.trimEnd('/')}/chat/completions")
@@ -245,7 +249,8 @@ class LLMRepository @Inject constructor(
         model: String,
         turns: List<ChatTurn>,
         systemPrompt: String?,
-        tools: List<AgentTool>
+        tools: List<AgentTool>,
+        finalAnswer: Boolean = false
     ): Request {
         val messages = JsonArray()
         var pendingResults: JsonArray? = null
@@ -295,6 +300,7 @@ class LLMRepository @Inject constructor(
                     })
                 }
             })
+            if (finalAnswer && tools.isNotEmpty()) add("tool_choice", obj("type" to "none"))
         }
         return Request.Builder()
             .url("${provider.effectiveBaseUrl.trimEnd('/')}/messages")

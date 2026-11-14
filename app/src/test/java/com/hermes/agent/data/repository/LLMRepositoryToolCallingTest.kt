@@ -71,6 +71,26 @@ class LLMRepositoryToolCallingTest {
     }
 
     @Test
+    fun finalAnswerRoundForbidsToolsButKeepsTheirDefinitions() {
+        val turns = listOf(
+            ChatTurn.User("any adb devices?"),
+            ChatTurn.Assistant("", listOf(ToolCall("c1", "scan_lan", "{}"))),
+            ChatTurn.ToolResult("c1", "scan_lan", "192.168.1.105 open: 5555/adb")
+        )
+        for (type in listOf(ProviderType.OPENROUTER, ProviderType.ANTHROPIC)) {
+            server.enqueue(sse(null to "[DONE]"))
+            runBlocking { repo.streamTurn(provider(type), "m", turns, "sys", listOf(fakeTool), 30, "c", finalAnswer = true).toList() }
+            val body = lastRequestJson()
+            assertTrue(body.has("tools"))
+            if (type == ProviderType.ANTHROPIC) assertEquals("none", body.getAsJsonObject("tool_choice").get("type").asString)
+            else assertEquals("none", body.get("tool_choice").asString)
+        }
+        server.enqueue(sse(null to "[DONE]"))
+        stream(ProviderType.OPENAI, turns)
+        assertFalse(lastRequestJson().has("tool_choice"))
+    }
+
+    @Test
     fun openAiSendsToolResultsInWireFormat() {
         server.enqueue(sse(null to """{"choices":[{"delta":{"content":"Found 3 devices."}}]}""", null to "[DONE]"))
         stream(ProviderType.OPENAI, listOf(

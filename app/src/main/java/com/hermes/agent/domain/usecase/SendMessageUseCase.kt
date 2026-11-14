@@ -156,7 +156,9 @@ class SendMessageUseCase @Inject constructor(
             val startMs = System.currentTimeMillis()
             try {
                 var round = 0
-                while (round < MAX_TOOL_ROUNDS) {
+                var budgetHit = false
+                while (true) {
+                    if (round >= MAX_TOOL_ROUNDS) { budgetHit = true; break }
                     val calls = try {
                         streamRound(provider, model, attempt, systemPrompt(baseSystemPrompt, conversation, tools, installed), tools, settings, conversation.id)
                     } catch (e: Exception) {
@@ -178,6 +180,19 @@ class SendMessageUseCase @Inject constructor(
                     for (call in calls) attempt.turns += runTool(call, tools, toolContext, attempt)
                     round++
                 }
+                // Tools ran but no answer followed (the rounds ran out, or the model stopped after a tool): ask for one, without tools.
+                if (attempt.turns.any { it is ChatTurn.ToolResult } && (budgetHit || attempt.roundText.isBlank())) {
+                    val ask = (if (budgetHit) "You've used all $MAX_TOOL_ROUNDS tool rounds for this message. " else "") +
+                        "Now reply to the user in plain text from the tool results above: what you found, what it means, and anything you couldn't check. Don't call tools."
+                    try {
+                        streamRound(provider, model, attempt, listOfNotNull(systemPrompt(baseSystemPrompt, conversation, tools, installed), ask).joinToString("\n\n"),
+                            tools, settings, conversation.id, finalAnswer = true)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        emit(StreamChunk.Notice("$model didn't write a summary (${e.message ?: "error"}), so the tool results are shown instead."))
+                    }
+                }
                 if (attempt.text.isBlank() && attempt.log.isEmpty() && attempt.files.isEmpty()) throw IllegalStateException("empty response")
             } catch (e: CancellationException) {
                 throw e
@@ -194,7 +209,7 @@ class SendMessageUseCase @Inject constructor(
                 Message(
                     conversationId = conversation.id,
                     role = Role.ASSISTANT,
-                    content = attempt.text.toString().trim().ifBlank { "(no text reply)" },
+                    content = attempt.text.toString().trim().ifBlank { toolResultsFallback(attempt.turns) },
                     providerId = provider.id,
                     model = model,
                     durationMs = durationMs,
@@ -227,7 +242,8 @@ class SendMessageUseCase @Inject constructor(
         systemPrompt: String?,
         tools: List<AgentTool>,
         settings: AgentSettings,
-        conversationId: String
+        conversationId: String,
+        finalAnswer: Boolean = false
     ): List<ToolCall> {
         val calls = mutableListOf<ToolCall>()
         attempt.roundText = StringBuilder()
@@ -236,7 +252,7 @@ class SendMessageUseCase @Inject constructor(
             emit(StreamChunk.Token("\n\n"))
         }
         llmRepository
-            .streamTurn(provider, model, attempt.turns, systemPrompt, tools, settings.requestTimeoutSeconds, conversationId)
+            .streamTurn(provider, model, attempt.turns, systemPrompt, tools, settings.requestTimeoutSeconds, conversationId, finalAnswer)
             .collect { event ->
                 when (event) {
                     is StreamEvent.Text -> {
@@ -324,12 +340,21 @@ class SendMessageUseCase @Inject constructor(
         if (tools.isEmpty() || conversation.unrestrictedMode == UnrestrictedMode.NO_SYSTEM) return base
         val reach = tools.map { it.capability.displayName.lowercase() }.distinct().joinToString()
         val note = "You are running inside the Hermes Agent app on the user's Android phone, with tools that act on this phone ($reach). " +
-            "When the user asks about their network, nearby devices, connected hardware or the web, call the tools instead of saying you lack access." +
+            "When the user asks about their network, nearby devices, connected hardware or the web, call the tools instead of saying you lack access. " +
+            "Call several tools in one turn when checking many hosts or ports, and always finish with a written answer that sums up what the tools found." +
             (if (tools.any { it.name == "install_tool" }) " If a program you need is missing, install it with install_tool." else "") +
             (if (installed.isNotEmpty()) " Already installed for you: ${installed.joinToString()}." else "") +
             (if (tools.any { it.name == "post_file" }) " To show the user an image, video, audio or any file, post it with post_file, generate_image or text_to_speech; " +
                 "you can build media in Termux (ffmpeg, ImageMagick, Python) and post the result." else "")
         return listOfNotNull(base, note).joinToString("\n\n")
+    }
+
+    /** When the model wrote nothing at all, the user still gets what its tools returned. */
+    private fun toolResultsFallback(turns: List<ChatTurn>): String {
+        val results = turns.filterIsInstance<ChatTurn.ToolResult>().takeLast(6)
+        if (results.isEmpty()) return "(no text reply)"
+        return "The model didn't write a reply. Here's what its tools returned:\n\n" +
+            results.joinToString("\n\n") { r -> "**${r.name}**\n```\n${r.content.trim().take(1500)}\n```" }
     }
 
     private fun looksLikeNoMediaSupport(e: Exception): Boolean {

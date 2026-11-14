@@ -22,14 +22,16 @@ import kotlin.coroutines.resume
 
 private val COMMON_PORTS = mapOf(
     21 to "ftp", 22 to "ssh", 23 to "telnet", 53 to "dns", 80 to "http", 139 to "netbios", 443 to "https",
-    445 to "smb", 548 to "afp", 554 to "rtsp", 631 to "ipp", 1883 to "mqtt", 3389 to "rdp", 5000 to "upnp/http",
+    445 to "smb", 548 to "afp", 554 to "rtsp", 631 to "ipp", 1883 to "mqtt", 3389 to "rdp", 5000 to "upnp/http", 5555 to "adb",
     5900 to "vnc", 8008 to "chromecast", 8080 to "http-alt", 8443 to "https-alt", 9100 to "printer", 32400 to "plex",
     62078 to "apple-device"
 )
 
 private val MDNS_TYPES = listOf(
     "_http._tcp", "_ipp._tcp", "_printer._tcp", "_googlecast._tcp", "_airplay._tcp", "_raop._tcp",
-    "_spotify-connect._tcp", "_smb._tcp", "_ssh._tcp", "_hap._tcp", "_companion-link._tcp", "_workstation._tcp"
+    "_spotify-connect._tcp", "_smb._tcp", "_ssh._tcp", "_hap._tcp", "_companion-link._tcp", "_workstation._tcp",
+    // Android debugging: classic adb over TCP and Android 11+ wireless debugging (random port, so only mDNS finds it).
+    "_adb._tcp", "_adb-tls-connect._tcp", "_adb-tls-pairing._tcp"
 )
 
 private fun alive(e: Exception) = e is ConnectException // refused = a host answered
@@ -105,7 +107,7 @@ class LanScanTool @Inject constructor(@ApplicationContext private val context: C
     override val name = "scan_lan"
     override val capability = Capability.NETWORK
     override val description = "Find devices on the local network this phone is connected to. Probes every address in the subnet on common ports " +
-        "and discovers mDNS/Bonjour services (printers, Chromecasts, AirPlay, smart home). Returns IP, hostname, open ports and service names. " +
+        "and discovers mDNS/Bonjour services (printers, Chromecasts, AirPlay, smart home, Android ADB/wireless debugging). Returns IP, hostname, open ports and service names. " +
         "Takes about 10-20 seconds."
     override val parameters = schema(
         "subnet" to prop("string", "Optional CIDR to scan, e.g. 192.168.1.0/24. Defaults to the current Wi-Fi or Ethernet subnet. Max /22.")
@@ -212,7 +214,7 @@ class LanScanTool @Inject constructor(@ApplicationContext private val context: C
             @Suppress("DEPRECATION")
             val ip = resolved.host?.hostAddress ?: continue
             val kind = info.serviceType.trim('.').substringBefore("._tcp").trimStart('_')
-            byIp.getOrPut(ip) { mutableListOf() } += "${resolved.serviceName} [$kind]"
+            byIp.getOrPut(ip) { mutableListOf() } += "${resolved.serviceName} [$kind, port ${resolved.port}]"
         }
         return byIp
     }
