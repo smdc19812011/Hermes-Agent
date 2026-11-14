@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.hermes.agent.domain.model.*
+import com.hermes.agent.domain.tools.Capability
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -26,6 +27,7 @@ class SettingsRepository @Inject constructor(
         val REQUEST_TIMEOUT = intPreferencesKey("request_timeout_seconds")
         val SHOW_PROVIDER_BADGE = booleanPreferencesKey("show_provider_badge")
         val THEME = stringPreferencesKey("theme")
+        val DEVICE_ACCESS = stringSetPreferencesKey("device_access")
     }
 
     val settings: Flow<AgentSettings> = context.dataStore.data.map { prefs ->
@@ -38,7 +40,9 @@ class SettingsRepository @Inject constructor(
             maxProviderAttempts = prefs[Keys.MAX_PROVIDER_ATTEMPTS] ?: defaults.maxProviderAttempts,
             requestTimeoutSeconds = prefs[Keys.REQUEST_TIMEOUT] ?: defaults.requestTimeoutSeconds,
             showProviderBadge = prefs[Keys.SHOW_PROVIDER_BADGE] ?: defaults.showProviderBadge,
-            theme = enumOr(prefs[Keys.THEME], defaults.theme)
+            theme = enumOr(prefs[Keys.THEME], defaults.theme),
+            deviceAccess = prefs[Keys.DEVICE_ACCESS].orEmpty()
+                .mapNotNull { runCatching { Capability.valueOf(it) }.getOrNull() }.toSet()
         )
     }
 
@@ -52,6 +56,7 @@ class SettingsRepository @Inject constructor(
             prefs[Keys.REQUEST_TIMEOUT] = settings.requestTimeoutSeconds
             prefs[Keys.SHOW_PROVIDER_BADGE] = settings.showProviderBadge
             prefs[Keys.THEME] = settings.theme.name
+            prefs[Keys.DEVICE_ACCESS] = settings.deviceAccess.map { it.name }.toSet()
         }
     }
 

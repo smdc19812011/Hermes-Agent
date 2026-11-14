@@ -21,7 +21,7 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): HermesDatabase =
         Room.databaseBuilder(context, HermesDatabase::class.java, "hermes.db")
-            .fallbackToDestructiveMigration()
+            .addMigrations(HermesDatabase.MIGRATION_1_2, HermesDatabase.MIGRATION_2_3)
             .build()
 
     @Provides fun provideConversationDao(db: HermesDatabase): ConversationDao = db.conversationDao()

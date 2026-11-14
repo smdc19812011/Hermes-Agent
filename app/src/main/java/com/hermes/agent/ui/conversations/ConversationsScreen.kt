@@ -31,6 +31,8 @@ fun ConversationsScreen(
     onOpenChat: (String) -> Unit,
     onOpenProviders: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenRuntime: () -> Unit,
+    onOpenSandbox: () -> Unit,
     vm: ConversationsViewModel = hiltViewModel()
 ) {
     val conversations by vm.conversations.collectAsStateWithLifecycle()
@@ -58,6 +60,12 @@ fun ConversationsScreen(
                     Text("Hermes", style = MaterialTheme.typography.headlineMedium)
                 },
                 actions = {
+                    IconButton(onClick = onOpenRuntime) {
+                        Icon(Icons.Default.SmartToy, contentDescription = "Agent runtime")
+                    }
+                    IconButton(onClick = onOpenSandbox) {
+                        Icon(Icons.Default.Terminal, contentDescription = "Code sandbox")
+                    }
                     IconButton(onClick = onOpenProviders) {
                         Icon(Icons.Default.Hub, contentDescription = "Providers")
                     }

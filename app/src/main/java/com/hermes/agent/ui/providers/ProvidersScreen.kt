@@ -173,7 +173,8 @@ private fun ProviderItem(
             Column(modifier = Modifier.weight(1f)) {
                 Text(provider.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "${provider.type.displayName} · ${provider.defaultModel}",
+                    "${provider.type.displayName} · ${provider.defaultModel}" +
+                        if (provider.models.size > 1) " · +${provider.models.size - 1} fallback${if (provider.models.size > 2) "s" else ""}" else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

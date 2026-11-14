@@ -11,4 +11,7 @@ sealed class Routes(val route: String) {
         fun edit(id: String) = "providers/edit?providerId=$id"
     }
     data object Settings : Routes("settings")
+    data object Runtime : Routes("runtime")
+    data object Sandbox : Routes("sandbox")
+    data object ToolLibrary : Routes("tools")
 }

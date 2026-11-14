@@ -16,6 +16,8 @@ class ProviderRepository @Inject constructor(private val dao: ProviderDao) {
 
     suspend fun getEnabled(): List<Provider> = dao.getEnabled().map { it.toDomain() }
 
+    suspend fun getAll(): List<Provider> = dao.getAll().map { it.toDomain() }
+
     suspend fun getById(id: String): Provider? = dao.getById(id)?.toDomain()
 
     suspend fun save(provider: Provider) = dao.upsert(provider.toEntity())

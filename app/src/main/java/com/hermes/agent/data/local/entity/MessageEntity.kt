@@ -24,5 +24,6 @@ data class MessageEntity(
     val model: String?,
     val tokenCount: Int,
     val durationMs: Long,
+    val toolLog: String? = null,
     val createdAt: Long
 )

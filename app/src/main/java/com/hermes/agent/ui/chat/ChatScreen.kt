@@ -7,12 +7,16 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -22,11 +26,25 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.hermes.agent.data.sandbox.SandboxLanguage
 import com.hermes.agent.domain.model.*
+import com.hermes.agent.ui.sandbox.ResultPanel
+
+private val CODE_FENCE = Regex("```([A-Za-z0-9_+-]*)[^\\n]*\\n(.*?)```", RegexOption.DOT_MATCHES_ALL)
+
+private data class RunnableBlock(val language: SandboxLanguage, val code: String)
+
+private fun runnableBlocks(content: String, termuxReady: Boolean): List<RunnableBlock> =
+    CODE_FENCE.findAll(content).mapNotNull { m ->
+        SandboxLanguage.fromFence(m.groupValues[1], termuxReady)?.let { RunnableBlock(it, m.groupValues[2].trimEnd()) }
+    }.toList()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,6 +55,10 @@ fun ChatScreen(
     vm: ChatViewModel = hiltViewModel()
 ) {
     LaunchedEffect(conversationId) { vm.init(conversationId) }
+    LifecycleResumeEffect(Unit) {
+        vm.refreshTermux()
+        onPauseOrDispose { }
+    }
 
     val state by vm.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
@@ -45,8 +67,23 @@ fun ChatScreen(
 
     val showStreamingItem = state.isLoading
     val itemCount = state.messages.size + if (showStreamingItem) 1 else 0
-    LaunchedEffect(itemCount, state.streamingContent.length) {
+    LaunchedEffect(itemCount, state.streamingContent.length, state.tools.size) {
         if (itemCount > 0) listState.scrollToItem(itemCount - 1, Int.MAX_VALUE)
+    }
+
+    state.codeRun?.let { run ->
+        ModalBottomSheet(onDismissRequest = { vm.dismissCodeRun() }) {
+            Column(
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Run ${run.language.displayName}", style = MaterialTheme.typography.titleMedium)
+                CodeBlock(run.code)
+                val result = run.result
+                if (result == null) LinearProgressIndicator(Modifier.fillMaxWidth()) else ResultPanel(result)
+                Spacer(Modifier.height(24.dp))
+            }
+        }
     }
 
     Scaffold(
@@ -54,97 +91,60 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(
-                            state.conversation?.title ?: "Chat",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Text(state.conversation?.title ?: "Chat", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         state.activeProviderName?.let { name ->
                             Text(
-                                "$name · ${state.activeModel ?: ""}",
+                                "$name · ${state.activeModel.orEmpty()}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                 },
                 actions = {
-                    // Unrestricted mode toggle
                     state.conversation?.let { conv ->
-                        val unrestrictedIcon = when (conv.unrestrictedMode) {
+                        val icon = when (conv.unrestrictedMode) {
                             UnrestrictedMode.OFF -> Icons.Default.Lock
                             UnrestrictedMode.NO_SYSTEM -> Icons.Default.LockOpen
                             UnrestrictedMode.CUSTOM -> Icons.Default.AllInclusive
                         }
-                        val unrestrictedTint = when (conv.unrestrictedMode) {
-                            UnrestrictedMode.OFF -> MaterialTheme.colorScheme.onSurfaceVariant
-                            else -> MaterialTheme.colorScheme.primary
-                        }
+                        val tint = if (conv.unrestrictedMode == UnrestrictedMode.OFF) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.primary
                         IconButton(onClick = { vm.cycleUnrestrictedMode() }) {
-                            Icon(
-                                unrestrictedIcon,
-                                "Unrestricted mode: ${conv.unrestrictedMode.displayName}",
-                                tint = unrestrictedTint
-                            )
+                            Icon(icon, "Unrestricted mode: ${conv.unrestrictedMode.displayName}", tint = tint)
                         }
                     }
-
-                    // Routing strategy menu
                     Box {
-                        IconButton(onClick = { showRoutingMenu = true }) {
-                            Icon(Icons.Default.AccountTree, "Routing")
-                        }
-                        DropdownMenu(
-                            expanded = showRoutingMenu,
-                            onDismissRequest = { showRoutingMenu = false }
-                        ) {
+                        IconButton(onClick = { showRoutingMenu = true }) { Icon(Icons.Default.AccountTree, "Routing") }
+                        DropdownMenu(expanded = showRoutingMenu, onDismissRequest = { showRoutingMenu = false }) {
                             RoutingStrategy.entries.forEach { strategy ->
-                                val selected = state.conversation?.routingStrategy == strategy
                                 DropdownMenuItem(
                                     text = { Text(strategy.displayName) },
                                     onClick = { vm.setRoutingStrategy(strategy); showRoutingMenu = false },
                                     leadingIcon = {
-                                        if (selected) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
-                                        else Spacer(Modifier.size(24.dp))
+                                        if (state.conversation?.routingStrategy == strategy) {
+                                            Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+                                        } else Spacer(Modifier.size(24.dp))
                                     }
                                 )
                             }
                         }
                     }
-
-                    IconButton(onClick = onOpenProviders) {
-                        Icon(Icons.Default.Hub, "Providers")
-                    }
+                    IconButton(onClick = onOpenProviders) { Icon(Icons.Default.Hub, "Providers") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
         },
         bottomBar = {
             Column {
+                state.approval?.let { ApprovalCard(it, onAnswer = vm::answerApproval) }
                 AnimatedVisibility(visible = state.notice != null) {
-                    state.notice?.let { err ->
-                        Surface(
-                            color = MaterialTheme.colorScheme.errorContainer,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text(err, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                                IconButton(onClick = { vm.clearNotice() }, modifier = Modifier.size(32.dp)) {
-                                    Icon(Icons.Default.Close, "Dismiss", modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        }
-                    }
+                    state.notice?.let { NoticeBar(it, onDismiss = vm::clearNotice) }
                 }
                 ChatInput(
                     value = inputText,
@@ -155,7 +155,7 @@ fun ChatScreen(
                             inputText = ""
                         }
                     },
-                    onStop = { vm.stop() },
+                    onStop = vm::stop,
                     isLoading = state.isLoading
                 )
             }
@@ -163,23 +163,70 @@ fun ChatScreen(
     ) { padding ->
         LazyColumn(
             state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
+            modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             items(state.messages, key = { it.id }) { msg ->
-                MessageBubble(message = msg, showModel = state.showProviderBadge)
+                MessageBubble(
+                    message = msg,
+                    showModel = state.showProviderBadge,
+                    runnable = if (msg.role == Role.ASSISTANT) runnableBlocks(msg.content, state.termuxReady) else emptyList(),
+                    onRun = { vm.runCode(it.language, it.code) }
+                )
             }
-
             if (showStreamingItem) {
                 item(key = "streaming") {
-                    StreamingBubble(
-                        content = state.streamingContent,
-                        isLoading = state.isLoading && state.streamingContent.isEmpty()
-                    )
+                    StreamingBubble(content = state.streamingContent, tools = state.tools)
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ApprovalCard(pending: PendingApproval, onAnswer: (String) -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.tertiaryContainer, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Shield, null, tint = MaterialTheme.colorScheme.onTertiaryContainer)
+                Spacer(Modifier.width(8.dp))
+                Text(if (pending.request.local) "Allow this command?" else "Hermes wants to run a command", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onTertiaryContainer)
+            }
+            if (pending.request.command.isNotBlank()) CodeBlock(pending.request.command)
+            if (pending.request.description.isNotBlank()) {
+                Text(pending.request.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onTertiaryContainer)
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                pending.request.choices.forEach { choice ->
+                    val label = when (choice) {
+                        "once" -> "Allow once"
+                        "session" -> "Allow in this chat"
+                        "always" -> "Always allow"
+                        "deny" -> "Deny"
+                        else -> choice
+                    }
+                    if (choice == "deny") {
+                        OutlinedButton(enabled = !pending.sending, onClick = { onAnswer(choice) }) { Text(label) }
+                    } else {
+                        Button(enabled = !pending.sending, onClick = { onAnswer(choice) }) { Text(label) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoticeBar(text: String, onDismiss: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.Close, "Dismiss", modifier = Modifier.size(16.dp))
             }
         }
     }
@@ -193,10 +240,7 @@ private fun ChatInput(
     onStop: () -> Unit,
     isLoading: Boolean
 ) {
-    Surface(
-        tonalElevation = 2.dp,
-        shadowElevation = 8.dp
-    ) {
+    Surface(tonalElevation = 2.dp, shadowElevation = 8.dp) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -215,9 +259,7 @@ private fun ChatInput(
             )
             Spacer(Modifier.width(8.dp))
             if (isLoading) {
-                FilledTonalIconButton(onClick = onStop) {
-                    Icon(Icons.Default.Stop, "Stop generating")
-                }
+                FilledTonalIconButton(onClick = onStop) { Icon(Icons.Default.Stop, "Stop generating") }
             } else {
                 FilledIconButton(onClick = onSend, enabled = value.isNotBlank()) {
                     Icon(Icons.AutoMirrored.Filled.Send, "Send")
@@ -228,55 +270,75 @@ private fun ChatInput(
 }
 
 @Composable
-private fun MessageBubble(message: Message, showModel: Boolean) {
+private fun Avatar() {
+    Box(
+        modifier = Modifier
+            .size(28.dp)
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.primaryContainer),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("H", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MessageBubble(
+    message: Message,
+    showModel: Boolean,
+    runnable: List<RunnableBlock>,
+    onRun: (RunnableBlock) -> Unit
+) {
     val isUser = message.role == Role.USER
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         if (!isUser) {
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("H", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-            }
+            Avatar()
             Spacer(Modifier.width(8.dp))
         }
-
         Column(
             modifier = Modifier.widthIn(max = 320.dp),
-            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
+            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            if (message.toolLog.isNotEmpty()) ToolLog(message.toolLog)
             Surface(
                 shape = RoundedCornerShape(
                     topStart = 18.dp, topEnd = 18.dp,
                     bottomStart = if (isUser) 18.dp else 4.dp,
                     bottomEnd = if (isUser) 4.dp else 18.dp
                 ),
-                color = if (isUser) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surfaceVariant
+                color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
             ) {
                 SelectionContainer {
                     Text(
                         text = message.content,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    color = if (isUser) MaterialTheme.colorScheme.onPrimary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyLarge
+                        color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyLarge
                     )
                 }
             }
-
+            if (runnable.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    runnable.forEachIndexed { i, block ->
+                        AssistChip(
+                            onClick = { onRun(block) },
+                            leadingIcon = { Icon(Icons.Default.PlayArrow, null, Modifier.size(16.dp)) },
+                            label = { Text(if (runnable.size > 1) "Run ${block.language.displayName} #${i + 1}" else "Run ${block.language.displayName}") }
+                        )
+                    }
+                }
+            }
             if (!isUser && showModel && message.model != null) {
                 Text(
-                    text = if (message.durationMs > 0) "${message.model} · ${message.durationMs / 1000.0}s" else message.model,
+                    text = if (message.durationMs > 0) "${message.model} · ${"%.1f".format(message.durationMs / 1000.0)}s" else message.model,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(start = 4.dp)
                 )
             }
         }
@@ -284,57 +346,102 @@ private fun MessageBubble(message: Message, showModel: Boolean) {
 }
 
 @Composable
-private fun StreamingBubble(content: String, isLoading: Boolean) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .clip(RoundedCornerShape(50))
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("H", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+private fun ToolLog(entries: List<String>) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f))
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Build, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.secondary)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "Used ${entries.size} tool${if (entries.size == 1) "" else "s"}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, Modifier.size(16.dp))
         }
-        Spacer(Modifier.width(8.dp))
-
-        Surface(
-            shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 4.dp, bottomEnd = 18.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier.widthIn(max = 320.dp)
-        ) {
-            if (isLoading) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    repeat(3) { idx ->
-                        val delay = idx * 150
-                        ThinkingDot(delayMs = delay)
-                    }
-                }
-            } else {
-                Text(
-                    text = content,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyLarge
-                )
+        if (expanded) {
+            entries.forEach {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+        }
+    }
+}
+
+@Composable
+private fun StreamingBubble(content: String, tools: List<ToolActivity>) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Avatar()
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.widthIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            tools.forEach { tool ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (tool.completed) {
+                        Icon(Icons.Default.CheckCircle, "Done", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                    } else {
+                        CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        tool.display,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Surface(
+                shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 4.dp, bottomEnd = 18.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                if (content.isEmpty()) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        repeat(3) { ThinkingDot(delayMs = it * 150) }
+                    }
+                } else {
+                    Text(
+                        text = content,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CodeBlock(code: String) {
+    Surface(color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(8.dp)) {
+        SelectionContainer {
+            Text(
+                code,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(10.dp)
+            )
         }
     }
 }
 
 @Composable
 private fun ThinkingDot(delayMs: Int) {
-    val infiniteTransition = rememberInfiniteTransition(label = "dot")
-    val alpha by infiniteTransition.animateFloat(
+    val transition = rememberInfiniteTransition(label = "dot")
+    val alpha by transition.animateFloat(
         initialValue = 0.3f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(600, delayMillis = delayMs),
-            repeatMode = RepeatMode.Reverse
-        ),
+        animationSpec = infiniteRepeatable(animation = tween(600, delayMillis = delayMs), repeatMode = RepeatMode.Reverse),
         label = "dot_alpha"
     )
     Box(
@@ -344,4 +451,3 @@ private fun ThinkingDot(delayMs: Int) {
             .background(MaterialTheme.colorScheme.primary.copy(alpha = alpha))
     )
 }
-

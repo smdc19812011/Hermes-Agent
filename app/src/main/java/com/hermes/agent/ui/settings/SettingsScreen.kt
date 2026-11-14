@@ -19,6 +19,7 @@ import kotlin.math.roundToInt
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
+    onOpenToolLibrary: () -> Unit,
     vm: SettingsViewModel = hiltViewModel()
 ) {
     val loaded by vm.settings.collectAsStateWithLifecycle()
@@ -50,6 +51,15 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            SectionHeader("Device access")
+            DeviceAccessSection(
+                enabled = settings.deviceAccess,
+                onChange = { caps -> vm.update { it.copy(deviceAccess = caps) } }
+            )
+            OutlinedButton(onClick = onOpenToolLibrary, modifier = Modifier.fillMaxWidth()) {
+                Text("Tool library: install programs for every chat")
+            }
+
             SectionHeader("Default routing for new chats")
             ChoiceList(
                 options = RoutingStrategy.entries,
@@ -96,7 +106,7 @@ fun SettingsScreen(
 
             SectionHeader("Fallback and network")
             SliderSetting(
-                title = "Providers to try per message",
+                title = "Models to try per message",
                 valueLabel = "${settings.maxProviderAttempts}",
                 value = settings.maxProviderAttempts.toFloat(),
                 range = 1f..10f,

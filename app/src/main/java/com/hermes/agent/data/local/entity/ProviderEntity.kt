@@ -11,6 +11,7 @@ data class ProviderEntity(
     val apiKey: String,
     val baseUrl: String,
     val defaultModel: String,
+    val models: String? = null,
     val isEnabled: Boolean,
     val priority: Int,
     val avgResponseMs: Long = 0L,

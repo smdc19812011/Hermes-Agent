@@ -14,6 +14,7 @@ data class Message(
     val model: String? = null,
     val tokenCount: Int = 0,
     val durationMs: Long = 0,
+    val toolLog: List<String> = emptyList(),
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -26,6 +27,7 @@ fun MessageEntity.toDomain() = Message(
     model = model,
     tokenCount = tokenCount,
     durationMs = durationMs,
+    toolLog = toolLog?.split('\n')?.filter { it.isNotBlank() }.orEmpty(),
     createdAt = createdAt
 )
 
@@ -38,5 +40,6 @@ fun Message.toEntity() = MessageEntity(
     model = model,
     tokenCount = tokenCount,
     durationMs = durationMs,
+    toolLog = toolLog.joinToString("\n"),
     createdAt = createdAt
 )

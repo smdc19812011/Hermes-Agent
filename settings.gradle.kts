@@ -13,6 +13,8 @@ dependencyResolutionManagement {
         // Google's mirror of Maven Central; avoids Central's rate limiting.
         maven("https://maven-central.storage-download.googleapis.com/maven2/")
         mavenCentral()
+        // JitPack serves only the USB serial driver library; nothing else may resolve from it.
+        maven("https://jitpack.io") { content { includeGroup("com.github.mik3y") } }
     }
 }
 rootProject.name = "HermesAgent"

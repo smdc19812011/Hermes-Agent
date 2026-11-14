@@ -9,6 +9,9 @@ interface ProviderDao {
     @Query("SELECT * FROM providers ORDER BY priority ASC")
     fun observeAll(): Flow<List<ProviderEntity>>
 
+    @Query("SELECT * FROM providers ORDER BY priority ASC")
+    suspend fun getAll(): List<ProviderEntity>
+
     @Query("SELECT * FROM providers WHERE isEnabled = 1 ORDER BY priority ASC")
     suspend fun getEnabled(): List<ProviderEntity>
 

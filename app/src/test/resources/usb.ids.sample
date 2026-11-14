@@ -1,0 +1,281 @@
+#
+#	List of USB ID's
+#
+#	Maintained by Stephen J. Gowdy <linux.usb.ids@gmail.com>
+#	If you have any new entries, please submit them via
+#		http://www.linux-usb.org/usb-ids.html
+#	or send entries as patches (diff -u old new) in the
+#	body of your email (a bot will attempt to deal with it).
+#	The latest version can be obtained from
+#		http://www.linux-usb.org/usb.ids
+#
+# Version: 2026.06.26
+# Date:    2026-06-26 20:34:02
+#
+
+# Vendors, devices and interfaces. Please keep sorted.
+
+# Syntax:
+# vendor  vendor_name
+#	device  device_name				<-- single tab
+#		interface  interface_name		<-- two tabs
+
+0483  STMicroelectronics
+	0102  Remote NDIS Network device with Android debug (ADB)
+	0103  Remote NDIS Network device
+	0104  MTP device with Android debug (ADB)
+	0105  MTP device
+	0106  PTP device with Android debug (ADB)
+	0107  PTP device
+	0137  BeWAN ADSL USB ST (blue or green)
+	0138  Unicorn II (ST70138B + MTC-20174TQ chipset)
+	0adb  Android Debug Bridge (ADB) device
+	0afb  Android Fastboot device
+	1307  Cytronix 6in1 Card Reader
+	163d  Cool Icam Digi-MP3
+	2015  TouchChip® Fingerprint Reader
+	2016  Fingerprint Reader
+	2017  Biometric Smart Card Reader
+	2018  BioSimKey
+	2302  Portable Flash Device (PFD)
+	3744  ST-LINK/V1
+	3747  ST Micro Connect Lite
+	3748  ST-LINK/V2
+	374b  ST-LINK/V2.1
+	374d  STLINK-V3 Loader
+	374e  STLINK-V3
+	374f  STLINK-V3
+	3752  ST-LINK/V2.1
+	3753  STLINK-V3
+	4810  ISDN adapter
+	481d  BT Digital Access adapter
+	5000  ST Micro/Ergenic ERG BT-002 Bluetooth Adapter
+	5001  ST Micro Bluetooth Device
+	5710  Joystick in FS Mode
+	5720  Mass Storage Device
+	5721  Interrupt Demo
+	5722  Bulk Demo
+	572a  STM32F401 microcontroller [ARM Cortex M4] [CDC/ACM serial port]
+	5730  Audio Speaker
+	5731  Microphone
+	5740  Virtual COM Port
+	5750  LED badge -- mini LED display -- 11x44
+	7270  ST Micro Serial Bridge
+	7554  56k SoftModem
+	8213  ThermaData Logger Cradle
+	8259  Probe
+	91d1  Sensor Hub
+	a171  ThermaData WiFi
+	a2e0  BMeasure instrument
+	a43f  inbed.io - Unified Controller (Gen 2)
+	df11  STM Device in DFU Mode
+	ff10  Swann ST56 Modem
+18d1  Google Inc.
+	0001  Onda V972 (storage access)
+	0003  Android-powered device using AllWinner Technology SoC
+	0006  Onda V972 MTP
+	0008  Onda V972 PTP (camera)
+	0d02  Celkon A88
+	2d00  Android Open Accessory device (accessory)
+	2d01  Android Open Accessory device (accessory + ADB)
+	2d02  Android Open Accessory device (audio)
+	2d03  Android Open Accessory device (audio + ADB)
+	2d04  Android Open Accessory device (accessory + audio)
+	2d05  Android Open Accessory device (accessory + audio + ADB)
+	4e11  Nexus One
+	4e12  Nexus One (debug)
+	4e13  Nexus One (tether)
+	4e20  Nexus S (fastboot)
+	4e21  Nexus S
+	4e22  Nexus S (debug)
+	4e24  Nexus S (tether)
+	4e30  Galaxy Nexus (fastboot)
+	4e40  Nexus 7 (fastboot)
+	4e41  Nexus 7 (MTP)
+	4e42  Nexus 7 (debug)
+	4e43  Nexus 7 (PTP)
+	4e44  Nexus 7 2012 (PTP)
+	4ee0  Nexus/Pixel Device (fastboot)
+	4ee1  Nexus/Pixel Device (MTP)
+	4ee2  Nexus/Pixel Device (MTP + debug)
+	4ee3  Nexus/Pixel Device (tether)
+	4ee4  Nexus/Pixel Device (tether+ debug)
+	4ee5  Nexus/Pixel Device (PTP)
+	4ee6  Nexus/Pixel Device (PTP + debug)
+	4ee7  Nexus/Pixel Device (charging + debug)
+	4ee8  Nexus/Pixel Device (MIDI)
+	4ee9  Nexus/Pixel Device (MIDI + debug)
+	5033  Pixel earbuds
+	7102  Toshiba Thrive tablet
+	b004  Pandigital / B&N Novel 9" tablet
+	d001  Nexus 4 (fastboot)
+	d002  Nexus 4 (debug)
+	d00d  Xiaomi Mi/Redmi 2 (fastboot)
+	d109  LG G2x MTP
+	d10a  LG G2x MTP (debug)
+1a86  QinHeng Electronics
+	5512  CH341 in EPP/MEM/I2C mode, EPP/I2C adapter
+	5523  CH341 in serial mode, usb to serial port converter
+	5584  CH341 in parallel mode, usb to printer port converter
+	7522  CH340 serial converter
+	7523  CH340 serial converter
+	752d  CH345 MIDI adapter
+	7584  CH340S
+	e008  HID-based serial adapter
+2341  Arduino SA
+	0001  Uno (CDC ACM)
+	0010  Mega 2560 (CDC ACM)
+	0036  Leonardo Bootloader
+	003b  Serial Adapter (CDC ACM)
+	003d  Due Programming Port
+	003e  Due
+	003f  Mega ADK (CDC ACM)
+	0042  Mega 2560 R3 (CDC ACM)
+	0043  Uno R3 (CDC ACM)
+	0044  Mega ADK R3 (CDC ACM)
+	0045  Serial R3 (CDC ACM)
+	0049  ISP
+	8036  Leonardo (CDC ACM, HID)
+	8038  Robot Control Board (CDC ACM, HID)
+	8039  Robot Motor Board (CDC ACM, HID)
+C 00  (Defined at Interface level)
+C 01  Audio
+	01  Control Device
+	02  Streaming
+	03  MIDI Streaming
+C 02  Communications
+	01  Direct Line
+	02  Abstract (modem)
+		00  None
+		01  AT-commands (v.25ter)
+		02  AT-commands (PCCA101)
+		03  AT-commands (PCCA101 + wakeup)
+		04  AT-commands (GSM)
+		05  AT-commands (3G)
+		06  AT-commands (CDMA)
+		fe  Defined by command set descriptor
+		ff  Vendor Specific (MSFT RNDIS?)
+	03  Telephone
+	04  Multi-Channel
+	05  CAPI Control
+	06  Ethernet Networking
+	07  ATM Networking
+	08  Wireless Handset Control
+	09  Device Management
+	0a  Mobile Direct Line
+	0b  OBEX
+	0c  Ethernet Emulation
+		07  Ethernet Emulation (EEM)
+C 03  Human Interface Device
+	00  No Subclass
+		00  None
+		01  Keyboard
+		02  Mouse
+	01  Boot Interface Subclass
+		00  None
+		01  Keyboard
+		02  Mouse
+C 05  Physical Interface Device
+C 06  Imaging
+	01  Still Image Capture
+		01  Picture Transfer Protocol (PIMA 15470)
+C 07  Printer
+	01  Printer
+		00  Reserved/Undefined
+		01  Unidirectional
+		02  Bidirectional
+		03  IEEE 1284.4 compatible bidirectional
+		ff  Vendor Specific
+C 08  Mass Storage
+	01  RBC (typically Flash)
+		00  Control/Bulk/Interrupt
+		01  Control/Bulk
+		50  Bulk-Only
+	02  SFF-8020i, MMC-2 (ATAPI)
+	03  QIC-157
+	04  Floppy (UFI)
+		00  Control/Bulk/Interrupt
+		01  Control/Bulk
+		50  Bulk-Only
+	05  SFF-8070i
+	06  SCSI
+		00  Control/Bulk/Interrupt
+		01  Control/Bulk
+		50  Bulk-Only
+		62  USB Attached SCSI
+C 09  Hub
+	00  Unused
+		00  Full speed (or root) hub
+		01  Single TT
+		02  TT per port
+C 0a  CDC Data
+	00  Unused
+		30  I.430 ISDN BRI
+		31  HDLC
+		32  Transparent
+		50  Q.921M
+		51  Q.921
+		52  Q.921TM
+		90  V.42bis
+		91  Q.932 EuroISDN
+		92  V.120 V.24 rate ISDN
+		93  CAPI 2.0
+		fd  Host Based Driver
+		fe  CDC PUF
+		ff  Vendor specific
+C 0b  Chip/SmartCard
+C 0d  Content Security
+C 0e  Video
+	00  Undefined
+	01  Video Control
+	02  Video Streaming
+	03  Video Interface Collection
+C 0f  Personal Healthcare
+C 10  Audio/Video
+	01  AVData Control
+	02  AVData Video Stream
+	03  AVData Audio Stream
+C 11  Billboard
+C 12  Type-C Bridge
+C 13  Bulk Display
+C 14  MCTCP over USB
+	00  MCTCP Management
+		01  MCTCP 1.x
+		02  MCTCP 2.x
+	01  MCTCP Host
+		01  MCTCP 1.x
+		02  MCTCP 2.x
+C 3c  I3C
+C 58  Xbox
+	42  Controller
+C dc  Diagnostic
+	01  Reprogrammable Diagnostics
+		01  USB2 Compliance
+C e0  Wireless
+	01  Radio Frequency
+		01  Bluetooth
+		02  Ultra WideBand Radio Control
+		03  RNDIS
+	02  Wireless USB Wire Adapter
+		01  Host Wire Adapter Control/Data Streaming
+		02  Device Wire Adapter Control/Data Streaming
+		03  Device Wire Adapter Isochronous Streaming
+C ef  Miscellaneous Device
+	01  ?
+		01  Microsoft ActiveSync
+		02  Palm Sync
+	02  ?
+		01  Interface Association
+		02  Wire Adapter Multifunction Peripheral
+	03  ?
+		01  Cable Based Association
+	05  USB3 Vision
+C fe  Application Specific Interface
+	01  Device Firmware Update
+	02  IRDA Bridge
+	03  Test and Measurement
+		01  TMC
+		02  USB488
+C ff  Vendor Specific Class
+	ff  Vendor Specific Subclass
+		ff  Vendor Specific Protocol

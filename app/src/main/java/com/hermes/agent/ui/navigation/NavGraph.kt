@@ -10,6 +10,9 @@ import com.hermes.agent.ui.chat.ChatScreen
 import com.hermes.agent.ui.conversations.ConversationsScreen
 import com.hermes.agent.ui.providers.AddEditProviderScreen
 import com.hermes.agent.ui.providers.ProvidersScreen
+import com.hermes.agent.ui.runtime.RuntimeScreen
+import com.hermes.agent.ui.sandbox.SandboxScreen
+import com.hermes.agent.ui.toolbox.ToolLibraryScreen
 import com.hermes.agent.ui.settings.SettingsScreen
 
 @Composable
@@ -20,7 +23,9 @@ fun HermesNavGraph(navController: NavHostController) {
             ConversationsScreen(
                 onOpenChat = { id -> navController.navigate(Routes.Chat.with(id)) },
                 onOpenProviders = { navController.navigate(Routes.Providers.route) },
-                onOpenSettings = { navController.navigate(Routes.Settings.route) }
+                onOpenSettings = { navController.navigate(Routes.Settings.route) },
+                onOpenRuntime = { navController.navigate(Routes.Runtime.route) },
+                onOpenSandbox = { navController.navigate(Routes.Sandbox.route) }
             )
         }
 
@@ -58,7 +63,31 @@ fun HermesNavGraph(navController: NavHostController) {
         }
 
         composable(Routes.Settings.route) {
-            SettingsScreen(onBack = { navController.popBackStack() })
+            SettingsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenToolLibrary = { navController.navigate(Routes.ToolLibrary.route) }
+            )
+        }
+
+        composable(Routes.ToolLibrary.route) {
+            ToolLibraryScreen(
+                onBack = { navController.popBackStack() },
+                onOpenRuntime = { navController.navigate(Routes.Runtime.route) { launchSingleTop = true } }
+            )
+        }
+
+        composable(Routes.Runtime.route) {
+            RuntimeScreen(
+                onBack = { navController.popBackStack() },
+                onOpenSandbox = { navController.navigate(Routes.Sandbox.route) }
+            )
+        }
+
+        composable(Routes.Sandbox.route) {
+            SandboxScreen(
+                onBack = { navController.popBackStack() },
+                onOpenRuntime = { navController.navigate(Routes.Runtime.route) { launchSingleTop = true } }
+            )
         }
     }
 }

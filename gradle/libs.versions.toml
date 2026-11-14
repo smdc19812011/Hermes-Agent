@@ -18,6 +18,11 @@ gson = "2.11.0"
 markwon = "4.6.2"
 activity-compose = "1.9.3"
 core-ktx = "1.13.1"
+javascriptengine = "1.0.0"
+concurrent-futures = "1.2.0"
+junit = "4.13.2"
+usb-serial = "v3.8.1"
+libaums = "0.10.0"
 
 [libraries]
 # Core
@@ -74,6 +79,14 @@ gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 # Markdown
 markwon-core = { group = "io.noties.markwon", name = "core", version.ref = "markwon" }
 markwon-syntax = { group = "io.noties.markwon", name = "syntax-highlight", version.ref = "markwon" }
+
+javascriptengine = { group = "androidx.javascriptengine", name = "javascriptengine", version.ref = "javascriptengine" }
+concurrent-futures-ktx = { group = "androidx.concurrent", name = "concurrent-futures-ktx", version.ref = "concurrent-futures" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+libaums = { group = "me.jahnen.libaums", name = "core", version.ref = "libaums" }
+usb-serial = { group = "com.github.mik3y", name = "usb-serial-for-android", version.ref = "usb-serial" }
+okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
+coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

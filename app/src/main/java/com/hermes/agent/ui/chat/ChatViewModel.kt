@@ -3,7 +3,13 @@ package com.hermes.agent.ui.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermes.agent.data.repository.ConversationRepository
+import com.hermes.agent.data.repository.LLMRepository
+import com.hermes.agent.data.repository.ProviderRepository
 import com.hermes.agent.data.repository.SettingsRepository
+import com.hermes.agent.data.sandbox.SandboxLanguage
+import com.hermes.agent.data.sandbox.SandboxResult
+import com.hermes.agent.data.sandbox.SandboxRunner
+import com.hermes.agent.data.tools.ToolApprovals
 import com.hermes.agent.domain.model.*
 import com.hermes.agent.domain.usecase.SendMessageUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -12,29 +18,42 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+data class PendingApproval(val providerId: String, val request: ApprovalRequest, val sending: Boolean = false)
+
+data class CodeRun(val language: SandboxLanguage, val code: String, val result: SandboxResult? = null)
+
 data class ChatUiState(
     val conversation: Conversation? = null,
     val messages: List<Message> = emptyList(),
     val streamingContent: String = "",
+    val tools: List<ToolActivity> = emptyList(),
+    val approval: PendingApproval? = null,
     val activeProviderName: String? = null,
     val activeModel: String? = null,
     val isLoading: Boolean = false,
     val notice: String? = null,
-    val showProviderBadge: Boolean = true
+    val showProviderBadge: Boolean = true,
+    val codeRun: CodeRun? = null,
+    val termuxReady: Boolean = false
 )
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     private val conversationRepository: ConversationRepository,
     private val sendMessageUseCase: SendMessageUseCase,
+    private val providerRepository: ProviderRepository,
+    private val llmRepository: LLMRepository,
+    private val sandboxRunner: SandboxRunner,
+    private val toolApprovals: ToolApprovals,
     settingsRepository: SettingsRepository
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(ChatUiState())
+    private val _state = MutableStateFlow(ChatUiState(termuxReady = sandboxRunner.termuxReady()))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     private var initializedFor: String? = null
     private var sendJob: Job? = null
+    private var codeJob: Job? = null
 
     init {
         settingsRepository.settings
@@ -53,36 +72,75 @@ class ChatViewModel @Inject constructor(
             .launchIn(viewModelScope)
     }
 
+    fun refreshTermux() = _state.update { it.copy(termuxReady = sandboxRunner.termuxReady()) }
+
     fun send(input: String) {
         val conversation = _state.value.conversation ?: return
         if (_state.value.isLoading || input.isBlank()) return
 
-        _state.update { it.copy(isLoading = true, streamingContent = "", notice = null) }
+        _state.update { it.copy(isLoading = true, streamingContent = "", tools = emptyList(), approval = null, notice = null) }
         val history = _state.value.messages
 
         sendJob = viewModelScope.launch {
             sendMessageUseCase(conversation, input.trim(), history)
                 .catch { e -> _state.update { it.copy(notice = e.message ?: "Request failed") } }
-                .onCompletion { _state.update { it.copy(isLoading = false, streamingContent = "") } }
+                .onCompletion {
+                    _state.update { it.copy(isLoading = false, streamingContent = "", tools = emptyList(), approval = null) }
+                }
                 .collect { chunk ->
                     when (chunk) {
                         is StreamChunk.ProviderSelected -> _state.update {
                             it.copy(
                                 activeProviderName = chunk.providerName,
                                 activeModel = chunk.model,
-                                streamingContent = ""
+                                streamingContent = "",
+                                tools = emptyList()
                             )
                         }
                         is StreamChunk.Token -> _state.update {
                             it.copy(streamingContent = it.streamingContent + chunk.text)
                         }
+                        is StreamChunk.Tool -> _state.update { s ->
+                            val a = chunk.activity
+                            // A "completed" frame omits the label, so keep the running frame's label.
+                            val tools = if (s.tools.any { it.id == a.id }) {
+                                s.tools.map { if (it.id == a.id) it.copy(completed = a.completed) else it }
+                            } else s.tools + a
+                            s.copy(tools = tools)
+                        }
+                        is StreamChunk.ApprovalRequested -> _state.update {
+                            it.copy(approval = PendingApproval(chunk.providerId, chunk.request))
+                        }
                         is StreamChunk.ProviderFailed -> _state.update {
                             it.copy(notice = "${chunk.providerName} failed: ${chunk.message}")
                         }
                         is StreamChunk.Failed -> _state.update { it.copy(notice = chunk.message) }
+                        is StreamChunk.Notice -> _state.update { it.copy(notice = chunk.message) }
                         StreamChunk.Done -> Unit
                     }
                 }
+        }
+    }
+
+    fun answerApproval(choice: String) {
+        val pending = _state.value.approval ?: return
+        if (pending.sending) return
+        if (pending.request.local) {
+            toolApprovals.answer(pending.request.runId, choice)
+            _state.update { it.copy(approval = null) }
+            return
+        }
+        _state.update { it.copy(approval = pending.copy(sending = true)) }
+        viewModelScope.launch {
+            val provider = providerRepository.getById(pending.providerId)
+            val error = runCatching {
+                requireNotNull(provider) { "Provider no longer exists" }
+                llmRepository.answerApproval(provider, pending.request.runId, choice)
+            }.exceptionOrNull()
+            _state.update {
+                if (error == null) it.copy(approval = null)
+                else it.copy(approval = pending, notice = "Couldn't send your answer: ${error.message}")
+            }
         }
     }
 
@@ -91,6 +149,20 @@ class ChatViewModel @Inject constructor(
     }
 
     fun clearNotice() = _state.update { it.copy(notice = null) }
+
+    fun runCode(language: SandboxLanguage, code: String) {
+        codeJob?.cancel()
+        _state.update { it.copy(codeRun = CodeRun(language, code)) }
+        codeJob = viewModelScope.launch {
+            val result = sandboxRunner.run(language, code)
+            _state.update { s -> s.codeRun?.takeIf { it.code == code }?.let { s.copy(codeRun = it.copy(result = result)) } ?: s }
+        }
+    }
+
+    fun dismissCodeRun() {
+        codeJob?.cancel()
+        _state.update { it.copy(codeRun = null) }
+    }
 
     fun cycleUnrestrictedMode() {
         val conv = _state.value.conversation ?: return
