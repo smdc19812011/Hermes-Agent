@@ -605,11 +605,14 @@ private fun StreamingBubble(content: String, tools: List<ToolActivity>, files: L
                 }
             }
             if (files.isNotEmpty()) AttachmentList(files, attachmentActions)
+            // Some models pad their text with blank lines while "thinking" between tool calls; trimmed here (not in the
+            // underlying state) so the live bubble doesn't balloon with empty space while a reply is still streaming in.
+            val trimmedContent = content.trim()
             Surface(
                 shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 4.dp, bottomEnd = 18.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant
             ) {
-                if (content.isEmpty()) {
+                if (trimmedContent.isEmpty()) {
                     Row(
                         modifier = Modifier.padding(14.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -619,7 +622,7 @@ private fun StreamingBubble(content: String, tools: List<ToolActivity>, files: L
                     }
                 } else {
                     Text(
-                        text = content,
+                        text = trimmedContent,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyLarge
