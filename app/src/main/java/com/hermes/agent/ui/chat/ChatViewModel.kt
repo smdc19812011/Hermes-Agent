@@ -42,7 +42,10 @@ data class ChatUiState(
     val termuxReady: Boolean = false,
     /** When the last token arrived and the last reply failed, for the avatar. */
     val lastTokenAt: Long = 0,
-    val failedAt: Long = 0
+    val failedAt: Long = 0,
+    /** Every tool run in this chat view, newest last, for the task panel; kept across messages. */
+    val panelTasks: List<ToolActivity> = emptyList(),
+    val panelOpen: Boolean = false
 )
 
 @HiltViewModel
@@ -66,6 +69,9 @@ class ChatViewModel @Inject constructor(
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     private var initializedFor: String? = null
+    fun setPanelOpen(open: Boolean) = _state.update { it.copy(panelOpen = open) }
+    fun clearPanel() = _state.update { it.copy(panelTasks = emptyList()) }
+
     private var sendJob: Job? = null
     private var codeJob: Job? = null
 
@@ -78,6 +84,7 @@ class ChatViewModel @Inject constructor(
     fun init(conversationId: String) {
         if (initializedFor == conversationId) return
         initializedFor = conversationId
+        _state.update { it.copy(panelTasks = emptyList(), panelOpen = false) }
         conversationRepository.observeById(conversationId)
             .onEach { conv -> _state.update { it.copy(conversation = conv) } }
             .launchIn(viewModelScope)
@@ -117,11 +124,11 @@ class ChatViewModel @Inject constructor(
                         }
                         is StreamChunk.Tool -> _state.update { s ->
                             val a = chunk.activity
-                            // A "completed" frame omits the label, so keep the running frame's label.
-                            val tools = if (s.tools.any { it.id == a.id }) {
-                                s.tools.map { if (it.id == a.id) it.copy(completed = a.completed) else it }
-                            } else s.tools + a
-                            s.copy(tools = tools)
+                            // A "completed" frame omits the label, so keep the running frame's label and only add fresh fields.
+                            fun merge(list: List<ToolActivity>) = if (list.any { it.id == a.id })
+                                list.map { if (it.id == a.id) it.copy(completed = a.completed, output = a.output.ifEmpty { it.output }, failed = it.failed || a.failed) else it }
+                            else list + a
+                            s.copy(tools = merge(s.tools), panelTasks = merge(s.panelTasks))
                         }
                         is StreamChunk.ApprovalRequested -> _state.update {
                             it.copy(approval = PendingApproval(chunk.providerId, chunk.request))

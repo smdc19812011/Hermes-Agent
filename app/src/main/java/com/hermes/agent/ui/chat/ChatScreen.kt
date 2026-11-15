@@ -104,6 +104,7 @@ fun ChatScreen(
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -140,6 +141,9 @@ fun ChatScreen(
                         IconButton(onClick = { vm.cycleUnrestrictedMode() }) {
                             Icon(icon, "Unrestricted mode: ${conv.unrestrictedMode.displayName}", tint = tint)
                         }
+                    }
+                    if (state.panelTasks.isNotEmpty()) IconButton(onClick = { vm.setPanelOpen(!state.panelOpen) }) {
+                        BadgedBox(badge = { Badge { Text("${state.panelTasks.size}") } }) { Icon(Icons.Default.Terminal, "Tasks") }
                     }
                     Box {
                         IconButton(onClick = { showAgentMenu = true }) {
@@ -243,6 +247,15 @@ fun ChatScreen(
                 }
             }
         }
+    }
+        TaskPanel(
+            tasks = state.panelTasks,
+            open = state.panelOpen,
+            anyRunning = state.isLoading && state.panelTasks.any { !it.completed },
+            onOpen = { vm.setPanelOpen(true) },
+            onMinimise = { vm.setPanelOpen(false) },
+            onClear = { vm.clearPanel() }
+        )
     }
 }
 

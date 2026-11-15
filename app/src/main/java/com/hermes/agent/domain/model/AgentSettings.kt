@@ -31,7 +31,11 @@ data class ToolActivity(
     val tool: String,
     val label: String,
     val emoji: String,
-    val completed: Boolean
+    val completed: Boolean,
+    /** Full result text for the task panel; not shown in the inline summary. */
+    val output: String = "",
+    /** True when the tool ended in an error, so the panel can flag it. */
+    val failed: Boolean = false
 ) {
     val display: String get() = listOf(emoji, label).filter { it.isNotBlank() }.joinToString(" ")
 }

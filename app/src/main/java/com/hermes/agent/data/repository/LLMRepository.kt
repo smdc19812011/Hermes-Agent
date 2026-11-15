@@ -205,6 +205,7 @@ class LLMRepository @Inject constructor(
 
     private inner class OpenAIParser : StreamParser {
         private val calls = sortedMapOf<Int, Triple<StringBuilder, StringBuilder, StringBuilder>>() // id, name, args
+        private val textCalls = TextToolCalls.Filter() // models that write tool calls as text instead of using the field
 
         override fun onEvent(type: String?, data: String): List<StreamEvent> = when (type) {
             "hermes.tool.progress" -> listOfNotNull(parseToolProgress(data)?.let { StreamEvent.Tool(it) })
@@ -231,14 +232,18 @@ class LLMRepository @Inject constructor(
             val images = delta.getAsJsonArray("images")?.mapNotNull { img ->
                 img.takeIf { it.isJsonObject }?.asJsonObject?.getAsJsonObject("image_url")?.str("url")?.let { StreamEvent.Image(it) }
             }.orEmpty()
-            return listOfNotNull(delta.str("content")?.takeIf { it.isNotEmpty() }?.let { StreamEvent.Text(it) }) + images
+            val text = delta.str("content")?.takeIf { it.isNotEmpty() }?.let { textCalls.feed(it) }?.takeIf { it.isNotEmpty() }
+            return listOfNotNull(text?.let { StreamEvent.Text(it) }) + images
         }
 
         override fun onEnd(): List<StreamEvent> {
-            if (calls.isEmpty()) return emptyList()
-            return listOf(StreamEvent.ToolCalls(calls.map { (i, acc) ->
+            val (leftover, parsed) = textCalls.finish()
+            val structured = calls.map { (i, acc) ->
                 ToolCall(acc.first.toString().ifEmpty { "call_$i" }, acc.second.toString(), acc.third.toString().ifBlank { "{}" })
-            }))
+            }
+            val all = structured + parsed
+            return listOfNotNull(leftover.takeIf { it.isNotEmpty() }?.let { StreamEvent.Text(it) }) +
+                (if (all.isEmpty()) emptyList() else listOf(StreamEvent.ToolCalls(all)))
         }
     }
 
@@ -313,6 +318,7 @@ class LLMRepository @Inject constructor(
 
     private class AnthropicParser : StreamParser {
         private val calls = sortedMapOf<Int, Triple<String, String, StringBuilder>>()
+        private val textCalls = TextToolCalls.Filter()
 
         override fun onEvent(type: String?, data: String): List<StreamEvent> {
             val e = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: return emptyList()
@@ -328,7 +334,7 @@ class LLMRepository @Inject constructor(
                 "content_block_delta" -> {
                     val delta = e.getAsJsonObject("delta")
                     when (delta?.str("type")) {
-                        "text_delta" -> listOfNotNull(delta.str("text")?.takeIf { it.isNotEmpty() }?.let { StreamEvent.Text(it) })
+                        "text_delta" -> listOfNotNull(delta.str("text")?.let { textCalls.feed(it) }?.takeIf { it.isNotEmpty() }?.let { StreamEvent.Text(it) })
                         "input_json_delta" -> { calls[e.get("index").asInt]?.third?.append(delta.str("partial_json").orEmpty()); emptyList() }
                         else -> emptyList()
                     }
@@ -337,9 +343,13 @@ class LLMRepository @Inject constructor(
             }
         }
 
-        override fun onEnd(): List<StreamEvent> =
-            if (calls.isEmpty()) emptyList()
-            else listOf(StreamEvent.ToolCalls(calls.values.map { (id, name, args) -> ToolCall(id, name, args.toString().ifBlank { "{}" }) }))
+        override fun onEnd(): List<StreamEvent> {
+            val (leftover, parsed) = textCalls.finish()
+            val structured = calls.values.map { (id, name, args) -> ToolCall(id, name, args.toString().ifBlank { "{}" }) }
+            val all = structured + parsed
+            return listOfNotNull(leftover.takeIf { it.isNotEmpty() }?.let { StreamEvent.Text(it) }) +
+                (if (all.isEmpty()) emptyList() else listOf(StreamEvent.ToolCalls(all)))
+        }
     }
 
     // ---- shared ----

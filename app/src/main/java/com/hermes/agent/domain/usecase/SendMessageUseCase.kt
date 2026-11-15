@@ -23,8 +23,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import javax.inject.Inject
 
-private const val MAX_TOOL_ROUNDS = 8
+private const val MAX_TOOL_ROUNDS = 12
 private const val MAX_RESULT_CHARS = 12_000
+private const val PANEL_OUTPUT_CHARS = 20_000
 
 class SendMessageUseCase @Inject constructor(
     private val conversationRepository: ConversationRepository,
@@ -350,8 +351,10 @@ class SendMessageUseCase @Inject constructor(
             "Error: ${e.message ?: e.javaClass.simpleName}"
         }
         posted.toList().forEach { attempt.files += it; emit(StreamChunk.File(it)) }
-        attempt.log[call.id] = activity.copy(completed = true)
-        emit(StreamChunk.Tool(activity.copy(completed = true)))
+        val failed = output.startsWith("Error:") || output.startsWith("Error from ")
+        val done = activity.copy(completed = true, output = output.take(PANEL_OUTPUT_CHARS), failed = failed)
+        attempt.log[call.id] = done
+        emit(StreamChunk.Tool(done))
         val clipped = if (output.length > MAX_RESULT_CHARS) output.take(MAX_RESULT_CHARS) + "\n[truncated]" else output
         return ChatTurn.ToolResult(call.id, call.name, clipped)
     }
