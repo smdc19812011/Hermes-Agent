@@ -20,7 +20,10 @@ data class OpenRouterUsage(
     val limitUsd: Double?,
     val isFreeTier: Boolean?,
     val rateLimitRequests: Int?,
-    val rateLimitInterval: String?
+    val rateLimitInterval: String?,
+    /** OpenRouter's own count of free-model requests used/allowed for the current UTC day — its real "today" figure. */
+    val freeModelDailyUsed: Int?,
+    val freeModelDailyLimit: Int?
 )
 
 /** Pure parsing of the "/auth/key" response, kept free of networking so it's unit-tested. */
@@ -28,12 +31,17 @@ object OpenRouterUsageParsing {
     fun parse(body: String): OpenRouterUsage {
         val data = JsonParser.parseString(body).asJsonObject.getAsJsonObject("data") ?: JsonObject()
         val rateLimit = data.getAsJsonObject("rate_limit")
+        // "rate_limit" is OpenRouter's own deprecated field and is documented to always return -1; treat that as unknown.
+        val rateLimitRequests = rateLimit?.get("requests")?.takeIf { it.isJsonPrimitive }?.asInt?.takeIf { it >= 0 }
+        val dailyRequests = data.getAsJsonObject("free_model_daily_requests")
         return OpenRouterUsage(
             usageUsd = data.get("usage")?.takeIf { it.isJsonPrimitive }?.asDouble,
             limitUsd = data.get("limit")?.takeIf { it.isJsonPrimitive }?.asDouble, // null in the response means "no limit"
             isFreeTier = data.get("is_free_tier")?.takeIf { it.isJsonPrimitive }?.asBoolean,
-            rateLimitRequests = rateLimit?.get("requests")?.takeIf { it.isJsonPrimitive }?.asInt,
-            rateLimitInterval = rateLimit?.get("interval")?.takeIf { it.isJsonPrimitive }?.asString
+            rateLimitRequests = rateLimitRequests,
+            rateLimitInterval = rateLimitRequests?.let { rateLimit?.get("interval")?.takeIf { v -> v.isJsonPrimitive }?.asString },
+            freeModelDailyUsed = dailyRequests?.get("used")?.takeIf { it.isJsonPrimitive }?.asInt,
+            freeModelDailyLimit = dailyRequests?.get("limit")?.takeIf { it.isJsonPrimitive }?.asInt
         )
     }
 }

@@ -214,15 +214,17 @@ fun ChatScreen(
                     else -> agents.firstOrNull { it.name.equals(avatarStatus.delegateAgentName, ignoreCase = true) }
                         ?.let { AgentAvatars.byId(it.avatar) } ?: AgentAvatars.UNKNOWN
                 }
-                // How many requests this app has sent the active provider today and in its current window, re-read on every
-                // tick so it stays current. When OpenRouter reports its own enforced rate-limit window, the "current" count
-                // is taken over that same window (e.g. "7/10s") instead of a fixed minute, so it means what OpenRouter means.
+                // The "today" figure comes from OpenRouter's own observability (free_model_daily_requests) when it's
+                // reporting one, so it reflects OpenRouter's own count rather than just what this app has seen locally;
+                // otherwise it falls back to this app's own local count. The window figure stays this app's own local
+                // pacing window, since OpenRouter's "rate_limit" field is deprecated and often unavailable.
                 val requestStatsText = state.activeProviderId?.let { id ->
                     val usage = state.openRouterUsage
                     val windowMs = ThrottleLogic.parseIntervalMs(usage?.rateLimitInterval) ?: 60_000L
                     val windowLabel = usage?.rateLimitInterval ?: "min"
                     val counts = vm.requestStats(id, windowMs)
-                    ThrottleLogic.formatRequestStats(counts.today, counts.lastMinute, windowLabel, usage?.rateLimitRequests)
+                    val today = usage?.freeModelDailyUsed ?: counts.today
+                    ThrottleLogic.formatRequestStats(today, usage?.freeModelDailyLimit, counts.lastMinute, windowLabel, usage?.rateLimitRequests)
                 }
                 ChatInput(
                     avatar = avatarStatus,

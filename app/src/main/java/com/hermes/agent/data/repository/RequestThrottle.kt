@@ -50,13 +50,16 @@ object ThrottleLogic {
     }
 
     /**
-     * The on-screen "N today · M/<window>" line. [windowCount]/[windowLabel] reflect the window actually counted —
-     * OpenRouter's own enforced rate-limit window when known (so the figure means what OpenRouter means by it),
-     * otherwise a plain trailing minute. [rateLimitRequests] is appended as the configured cap, when known.
+     * The on-screen "N today · M/<window>" line. [today]/[todayLimit] reflect the day's count actually shown —
+     * OpenRouter's own "free_model_daily_requests" figure when known, so "today" means OpenRouter's own count rather
+     * than just what this app has observed locally; otherwise this app's own local count, with no limit shown.
+     * [windowCount]/[windowLabel] are this app's own locally paced window; [rateLimitRequests] is OpenRouter's
+     * configured per-window cap, appended when known (its own "rate_limit" field is deprecated and often absent).
      */
-    fun formatRequestStats(today: Int, windowCount: Int, windowLabel: String, rateLimitRequests: Int?): String {
+    fun formatRequestStats(today: Int, todayLimit: Int?, windowCount: Int, windowLabel: String, rateLimitRequests: Int?): String {
+        val todayPart = if (todayLimit != null) "$today/$todayLimit today" else "$today today"
         val limit = rateLimitRequests?.let { " (limit $it)" }.orEmpty()
-        return "$today today · $windowCount/$windowLabel$limit"
+        return "$todayPart · $windowCount/$windowLabel$limit"
     }
 }
 

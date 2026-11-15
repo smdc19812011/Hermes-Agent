@@ -73,8 +73,8 @@ class ThrottleLogicTest {
 
     @Test
     fun formatsTheOnScreenLineWithAndWithoutAKnownLimit() {
-        assertEquals("12 today · 3/min", ThrottleLogic.formatRequestStats(12, 3, "min", null))
-        assertEquals("12 today · 7/10s (limit 20)", ThrottleLogic.formatRequestStats(12, 7, "10s", 20))
+        assertEquals("12 today · 3/min", ThrottleLogic.formatRequestStats(12, null, 3, "min", null))
+        assertEquals("12/50 today · 7/10s (limit 20)", ThrottleLogic.formatRequestStats(12, 50, 7, "10s", 20))
     }
 
     @Test
