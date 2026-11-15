@@ -25,7 +25,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import javax.inject.Inject
 
-private const val MAX_TOOL_ROUNDS = 12
+// A real multi-step job (installing build tools, compiling, packaging) can easily take dozens of small steps,
+// especially with a weaker model that works in tiny increments — 12 was cutting those off mid-task. These three
+// caps are independent and whichever is hit first ends the round: a hard ceiling on step count, a wall-clock
+// budget (the limiter that actually matters for a slow or chatty model), and an accumulated-output-size cap so a
+// very long job can't quietly overflow the model's context window.
+private const val MAX_TOOL_ROUNDS = 50
+private const val MAX_TOOL_TIME_MS = 8 * 60_000L
+private const val MAX_TOOL_OUTPUT_CHARS = 80_000
 private const val MAX_RESULT_CHARS = 12_000
 private const val PANEL_OUTPUT_CHARS = 20_000
 
@@ -189,9 +196,16 @@ class SendMessageUseCase @Inject constructor(
             val startMs = System.currentTimeMillis()
             try {
                 var round = 0
-                var budgetHit = false
+                var stopReason: String? = null
                 while (true) {
-                    if (round >= MAX_TOOL_ROUNDS) { budgetHit = true; break }
+                    stopReason = when {
+                        round >= MAX_TOOL_ROUNDS -> "You've used all $MAX_TOOL_ROUNDS tool rounds for this message."
+                        System.currentTimeMillis() - startMs > MAX_TOOL_TIME_MS -> "You've spent ${MAX_TOOL_TIME_MS / 60_000} minutes running tools for this message."
+                        attempt.turns.filterIsInstance<ChatTurn.ToolResult>().sumOf { it.content.length } > MAX_TOOL_OUTPUT_CHARS ->
+                            "Tool output for this message has grown large."
+                        else -> null
+                    }
+                    if (stopReason != null) break
                     val calls = try {
                         streamRound(provider, model, attempt, systemPrompt(baseSystemPrompt, conversation, tools, installed, userInput), tools, settings, conversation.id)
                     } catch (e: Exception) {
@@ -215,10 +229,12 @@ class SendMessageUseCase @Inject constructor(
                     if (!toolsOff && activated.addAll(skillConnections(calls))) tools = toolsFor(access, agent, activated)
                     round++
                 }
-                // Tools ran but no answer followed (the rounds ran out, or the model stopped after a tool): ask for one, without tools.
-                if (attempt.turns.any { it is ChatTurn.ToolResult } && (budgetHit || attempt.roundText.isBlank())) {
-                    val ask = (if (budgetHit) "You've used all $MAX_TOOL_ROUNDS tool rounds for this message. " else "") +
-                        "Now reply to the user in plain text from the tool results above: what you found, what it means, and anything you couldn't check. Don't call tools."
+                // Tools ran but no answer followed (a cap was hit, or the model stopped after a tool): ask for one, without tools.
+                if (attempt.turns.any { it is ChatTurn.ToolResult } && (stopReason != null || attempt.roundText.isBlank())) {
+                    val ask = (stopReason?.let { "$it " } ?: "") +
+                        "Now reply to the user in plain text from the tool results above: what you found, what it means, and anything you couldn't check. " +
+                        (if (stopReason != null) "If the task isn't finished, say exactly what's left so the user can ask you to continue. " else "") +
+                        "Don't call tools."
                     try {
                         streamRound(provider, model, attempt, listOfNotNull(systemPrompt(baseSystemPrompt, conversation, tools, installed, userInput), ask).joinToString("\n\n"),
                             tools, settings, conversation.id, finalAnswer = true)
@@ -404,7 +420,8 @@ class SendMessageUseCase @Inject constructor(
         val reach = tools.map { it.capability.displayName.lowercase() }.distinct().joinToString()
         val note = "You are running inside the Hermes Agent app on the user's Android phone, with tools that act on this phone ($reach). " +
             "When the user asks about their network, nearby devices, connected hardware or the web, call the tools instead of saying you lack access. " +
-            "Call several tools in one turn when checking many hosts or ports, and always finish with a written answer that sums up what the tools found." +
+            "Call several tools in one turn when checking many hosts or ports, and always finish with a written answer that sums up what the tools found. " +
+            "If you still have more steps to do, call the next tool right away in the same reply — never end a reply only saying what you're about to do next." +
             (if (tools.any { it.name == "install_tool" }) " If a program you need is missing, install it with install_tool." else "") +
             (if (installed.isNotEmpty()) " Already installed for you: ${installed.joinToString()}." else "") +
             (if (tools.any { it.name == "post_file" }) " To show the user an image, video, audio or any file, post it with post_file, generate_image or text_to_speech; " +
