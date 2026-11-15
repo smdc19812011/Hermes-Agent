@@ -214,11 +214,15 @@ fun ChatScreen(
                     else -> agents.firstOrNull { it.name.equals(avatarStatus.delegateAgentName, ignoreCase = true) }
                         ?.let { AgentAvatars.byId(it.avatar) } ?: AgentAvatars.UNKNOWN
                 }
-                // How many requests this app has sent the active provider today/this minute, re-read on every tick so it stays current.
+                // How many requests this app has sent the active provider today and in its current window, re-read on every
+                // tick so it stays current. When OpenRouter reports its own enforced rate-limit window, the "current" count
+                // is taken over that same window (e.g. "7/10s") instead of a fixed minute, so it means what OpenRouter means.
                 val requestStatsText = state.activeProviderId?.let { id ->
-                    val counts = vm.requestStats(id)
                     val usage = state.openRouterUsage
-                    ThrottleLogic.formatRequestStats(counts.today, counts.lastMinute, usage?.rateLimitRequests, usage?.rateLimitInterval)
+                    val windowMs = ThrottleLogic.parseIntervalMs(usage?.rateLimitInterval) ?: 60_000L
+                    val windowLabel = usage?.rateLimitInterval ?: "min"
+                    val counts = vm.requestStats(id, windowMs)
+                    ThrottleLogic.formatRequestStats(counts.today, counts.lastMinute, windowLabel, usage?.rateLimitRequests)
                 }
                 ChatInput(
                     avatar = avatarStatus,
@@ -292,9 +296,14 @@ private fun ApprovalCard(pending: PendingApproval, onAnswer: (String) -> Unit) {
                 Spacer(Modifier.width(8.dp))
                 Text(if (pending.request.local) "Allow this command?" else "Hermes wants to run a command", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onTertiaryContainer)
             }
-            if (pending.request.command.isNotBlank()) CodeBlock(pending.request.command)
-            if (pending.request.description.isNotBlank()) {
-                Text(pending.request.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onTertiaryContainer)
+            Column(
+                Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (pending.request.command.isNotBlank()) CodeBlock(pending.request.command)
+                if (pending.request.description.isNotBlank()) {
+                    Text(pending.request.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                }
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 pending.request.choices.forEach { choice ->

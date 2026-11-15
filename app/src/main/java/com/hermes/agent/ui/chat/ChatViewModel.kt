@@ -108,7 +108,7 @@ class ChatViewModel @Inject constructor(
     fun refreshTermux() = _state.update { it.copy(termuxReady = sandboxRunner.termuxReady()) }
 
     /** How many requests this app has sent [providerId] today and in the last minute; cheap and synchronous for the UI to poll. */
-    fun requestStats(providerId: String): RequestCounts = requestThrottle.counts(providerId)
+    fun requestStats(providerId: String, windowMs: Long = 60_000L): RequestCounts = requestThrottle.counts(providerId, windowMs = windowMs)
 
     /** Pulls OpenRouter's own usage/rate-limit report for this provider (a no-op, returning null, for any other type). */
     private fun refreshOpenRouterUsage(providerId: String) {

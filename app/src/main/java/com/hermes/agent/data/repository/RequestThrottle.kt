@@ -35,10 +35,28 @@ object ThrottleLogic {
     /** How many of [timestamps] fall in the trailing [windowMs] ending at [nowMs]. */
     fun countInWindow(timestamps: List<Long>, nowMs: Long, windowMs: Long): Int = timestamps.count { nowMs - it in 0..windowMs }
 
-    /** The on-screen "N today · M/min" line; appends the provider's own configured rate limit when known. */
-    fun formatRequestStats(today: Int, lastMinute: Int, rateLimitRequests: Int?, rateLimitInterval: String?): String {
-        val limit = rateLimitRequests?.let { reqs -> rateLimitInterval?.let { iv -> " · limit $reqs/$iv" } }.orEmpty()
-        return "$today today · $lastMinute/min$limit"
+    /** Parses OpenRouter-style intervals ("10s", "1m", "1h", "1d") into milliseconds; null if unrecognized. */
+    fun parseIntervalMs(interval: String?): Long? {
+        val match = interval?.trim()?.let { Regex("""^(\d+)([smhd])$""").find(it) } ?: return null
+        val amount = match.groupValues[1].toLongOrNull() ?: return null
+        val unitMs = when (match.groupValues[2]) {
+            "s" -> 1_000L
+            "m" -> 60_000L
+            "h" -> 3_600_000L
+            "d" -> 86_400_000L
+            else -> return null
+        }
+        return amount * unitMs
+    }
+
+    /**
+     * The on-screen "N today · M/<window>" line. [windowCount]/[windowLabel] reflect the window actually counted —
+     * OpenRouter's own enforced rate-limit window when known (so the figure means what OpenRouter means by it),
+     * otherwise a plain trailing minute. [rateLimitRequests] is appended as the configured cap, when known.
+     */
+    fun formatRequestStats(today: Int, windowCount: Int, windowLabel: String, rateLimitRequests: Int?): String {
+        val limit = rateLimitRequests?.let { " (limit $it)" }.orEmpty()
+        return "$today today · $windowCount/$windowLabel$limit"
     }
 }
 
@@ -75,13 +93,13 @@ class RequestThrottle @Inject constructor() {
         }
     }
 
-    /** How many requests this app has sent to [key] so far today (device's time zone) and in the last 60 seconds. */
-    fun counts(key: String, nowMs: Long = System.currentTimeMillis()): RequestCounts {
+    /** How many requests this app has sent to [key] so far today (device's time zone) and in the trailing [windowMs]. */
+    fun counts(key: String, nowMs: Long = System.currentTimeMillis(), windowMs: Long = 60_000L): RequestCounts {
         val list = history[key] ?: return RequestCounts(0, 0)
         val snapshot = synchronized(list) { list.toList() }
         return RequestCounts(
             today = snapshot.count { ThrottleLogic.isSameLocalDay(it, nowMs) },
-            lastMinute = ThrottleLogic.countInWindow(snapshot, nowMs, 60_000L)
+            lastMinute = ThrottleLogic.countInWindow(snapshot, nowMs, windowMs)
         )
     }
 }

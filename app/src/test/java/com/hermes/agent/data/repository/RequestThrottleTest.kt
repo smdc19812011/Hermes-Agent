@@ -73,8 +73,18 @@ class ThrottleLogicTest {
 
     @Test
     fun formatsTheOnScreenLineWithAndWithoutAKnownLimit() {
-        assertEquals("12 today · 3/min", ThrottleLogic.formatRequestStats(12, 3, null, null))
-        assertEquals("12 today · 3/min · limit 20/10s", ThrottleLogic.formatRequestStats(12, 3, 20, "10s"))
+        assertEquals("12 today · 3/min", ThrottleLogic.formatRequestStats(12, 3, "min", null))
+        assertEquals("12 today · 7/10s (limit 20)", ThrottleLogic.formatRequestStats(12, 7, "10s", 20))
+    }
+
+    @Test
+    fun parsesOpenRouterStyleIntervalsIntoMillis() {
+        assertEquals(10_000L, ThrottleLogic.parseIntervalMs("10s"))
+        assertEquals(60_000L, ThrottleLogic.parseIntervalMs("1m"))
+        assertEquals(2 * 3_600_000L, ThrottleLogic.parseIntervalMs("2h"))
+        assertEquals(86_400_000L, ThrottleLogic.parseIntervalMs("1d"))
+        assertEquals(null, ThrottleLogic.parseIntervalMs(null))
+        assertEquals(null, ThrottleLogic.parseIntervalMs("garbage"))
     }
 
     @Test
