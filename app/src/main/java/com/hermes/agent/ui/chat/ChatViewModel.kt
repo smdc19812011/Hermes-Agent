@@ -1,21 +1,15 @@
 package com.hermes.agent.ui.chat
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.hermes.agent.data.repository.ConversationRepository
-import com.hermes.agent.data.repository.LLMRepository
 import com.hermes.agent.data.repository.OpenRouterUsage
-import com.hermes.agent.data.repository.OpenRouterUsageRepository
-import com.hermes.agent.data.repository.ProviderRepository
 import com.hermes.agent.data.repository.RequestCounts
 import com.hermes.agent.data.repository.RequestThrottle
-import com.hermes.agent.data.repository.SettingsRepository
 import com.hermes.agent.data.sandbox.SandboxLanguage
 import com.hermes.agent.data.sandbox.SandboxResult
 import com.hermes.agent.data.sandbox.SandboxRunner
-import com.hermes.agent.data.tools.ToolApprovals
 import com.hermes.agent.domain.model.*
-import com.hermes.agent.domain.usecase.SendMessageUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
@@ -60,148 +54,48 @@ data class ChatUiState(
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
-    private val conversationRepository: ConversationRepository,
-    private val sendMessageUseCase: SendMessageUseCase,
-    private val providerRepository: ProviderRepository,
-    private val llmRepository: LLMRepository,
+    savedStateHandle: SavedStateHandle,
+    private val runner: ChatRunner,
     private val sandboxRunner: SandboxRunner,
-    private val toolApprovals: ToolApprovals,
     private val attachmentStore: com.hermes.agent.data.media.AttachmentStore,
     private val requestThrottle: RequestThrottle,
-    private val openRouterUsageRepository: OpenRouterUsageRepository,
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
-    settingsRepository: SettingsRepository,
     agentLibrary: com.hermes.agent.data.agents.AgentLibraryRepository
 ) : ViewModel() {
+
+    // Compose Navigation gives every chat destination a fresh ViewModel, even for the same conversation — the
+    // actual state lives in ChatRunner, keyed by this id, so a running message and its task-panel history survive that.
+    private val conversationId: String = checkNotNull(savedStateHandle["conversationId"]) { "ChatViewModel needs a conversationId" }
+    private val sharedState = runner.stateFor(conversationId)
 
     /** Saved agents this chat can switch to. */
     val agents: StateFlow<List<com.hermes.agent.domain.model.AgentProfile>> = agentLibrary.agents
 
-    private val _state = MutableStateFlow(ChatUiState(termuxReady = sandboxRunner.termuxReady()))
-    val state: StateFlow<ChatUiState> = _state.asStateFlow()
+    val state: StateFlow<ChatUiState> = sharedState.asStateFlow()
 
-    private var initializedFor: String? = null
-    fun setPanelOpen(open: Boolean) = _state.update { it.copy(panelOpen = open) }
-    fun clearPanel() = _state.update { it.copy(panelTasks = emptyList()) }
-
-    private var sendJob: Job? = null
     private var codeJob: Job? = null
 
     init {
-        settingsRepository.settings
-            .onEach { s -> _state.update { it.copy(showProviderBadge = s.showProviderBadge) } }
-            .launchIn(viewModelScope)
+        runner.ensureObserving(conversationId)
+        sharedState.update { it.copy(termuxReady = sandboxRunner.termuxReady()) }
     }
 
-    fun init(conversationId: String) {
-        if (initializedFor == conversationId) return
-        initializedFor = conversationId
-        _state.update { it.copy(panelTasks = emptyList(), panelOpen = false) }
-        conversationRepository.observeById(conversationId)
-            .onEach { conv -> _state.update { it.copy(conversation = conv) } }
-            .launchIn(viewModelScope)
-        conversationRepository.observeMessages(conversationId)
-            .onEach { msgs -> _state.update { it.copy(messages = msgs) } }
-            .launchIn(viewModelScope)
-    }
+    fun setPanelOpen(open: Boolean) = sharedState.update { it.copy(panelOpen = open) }
+    fun clearPanel() = sharedState.update { it.copy(panelTasks = emptyList()) }
 
-    fun refreshTermux() = _state.update { it.copy(termuxReady = sandboxRunner.termuxReady()) }
+    fun refreshTermux() = sharedState.update { it.copy(termuxReady = sandboxRunner.termuxReady()) }
 
     /** How many requests this app has sent [providerId] today and in the last minute; cheap and synchronous for the UI to poll. */
     fun requestStats(providerId: String, windowMs: Long = 60_000L): RequestCounts = requestThrottle.counts(providerId, windowMs = windowMs)
 
-    /** Pulls OpenRouter's own usage/rate-limit report for this provider (a no-op, returning null, for any other type). */
-    private fun refreshOpenRouterUsage(providerId: String) {
-        viewModelScope.launch {
-            val provider = providerRepository.getById(providerId) ?: return@launch
-            val usage = runCatching { openRouterUsageRepository.usage(provider) }.getOrNull()
-            if (_state.value.activeProviderId == providerId) _state.update { it.copy(openRouterUsage = usage) }
-        }
-    }
+    fun send(input: String) = runner.send(conversationId, input, sharedState.value.pending)
 
-    fun send(input: String) {
-        val conversation = _state.value.conversation ?: return
-        val files = _state.value.pending
-        if (_state.value.isLoading || _state.value.importing || (input.isBlank() && files.isEmpty())) return
-
-        _state.update { it.copy(isLoading = true, streamingContent = "", tools = emptyList(), approval = null, notice = null, streamingFiles = emptyList(), pending = emptyList()) }
-        val history = _state.value.messages
-
-        sendJob = viewModelScope.launch {
-            sendMessageUseCase(conversation, input.trim(), history, files)
-                .catch { e -> _state.update { it.copy(notice = e.message ?: "Request failed", failedAt = System.currentTimeMillis()) } }
-                .onCompletion {
-                    _state.update { it.copy(isLoading = false, streamingContent = "", tools = emptyList(), approval = null, streamingFiles = emptyList(), waitingUntil = 0) }
-                }
-                .collect { chunk ->
-                    when (chunk) {
-                        is StreamChunk.ProviderSelected -> {
-                            _state.update {
-                                it.copy(
-                                    activeProviderId = chunk.providerId,
-                                    activeProviderName = chunk.providerName,
-                                    activeModel = chunk.model,
-                                    streamingContent = "",
-                                    tools = emptyList(),
-                                    waitingUntil = 0
-                                )
-                            }
-                            refreshOpenRouterUsage(chunk.providerId)
-                        }
-                        is StreamChunk.Token -> _state.update {
-                            it.copy(streamingContent = it.streamingContent + chunk.text, lastTokenAt = System.currentTimeMillis(), waitingUntil = 0)
-                        }
-                        is StreamChunk.Waiting -> _state.update { it.copy(waitingUntil = chunk.untilMs, waitingLabel = chunk.label) }
-                        is StreamChunk.Tool -> _state.update { s ->
-                            val a = chunk.activity
-                            // A "completed" frame omits the label, so keep the running frame's label and only add fresh fields.
-                            fun merge(list: List<ToolActivity>) = if (list.any { it.id == a.id })
-                                list.map { if (it.id == a.id) it.copy(completed = a.completed, output = a.output.ifEmpty { it.output }, failed = it.failed || a.failed) else it }
-                            else list + a
-                            s.copy(tools = merge(s.tools), panelTasks = merge(s.panelTasks))
-                        }
-                        is StreamChunk.ApprovalRequested -> _state.update {
-                            it.copy(approval = PendingApproval(chunk.providerId, chunk.request))
-                        }
-                        is StreamChunk.ProviderFailed -> _state.update {
-                            it.copy(notice = "${chunk.providerName} failed: ${chunk.message}")
-                        }
-                        is StreamChunk.Failed -> _state.update { it.copy(notice = chunk.message, failedAt = System.currentTimeMillis()) }
-                        is StreamChunk.Notice -> _state.update { it.copy(notice = chunk.message) }
-                        is StreamChunk.File -> _state.update { it.copy(streamingFiles = it.streamingFiles + chunk.attachment) }
-                        StreamChunk.Done -> Unit
-                    }
-                }
-        }
-    }
-
-    fun answerApproval(choice: String) {
-        val pending = _state.value.approval ?: return
-        if (pending.sending) return
-        if (pending.request.local) {
-            toolApprovals.answer(pending.request.runId, choice)
-            _state.update { it.copy(approval = null) }
-            return
-        }
-        _state.update { it.copy(approval = pending.copy(sending = true)) }
-        viewModelScope.launch {
-            val provider = providerRepository.getById(pending.providerId)
-            val error = runCatching {
-                requireNotNull(provider) { "Provider no longer exists" }
-                llmRepository.answerApproval(provider, pending.request.runId, choice)
-            }.exceptionOrNull()
-            _state.update {
-                if (error == null) it.copy(approval = null)
-                else it.copy(approval = pending, notice = "Couldn't send your answer: ${error.message}")
-            }
-        }
-    }
+    fun answerApproval(choice: String) = runner.answerApproval(conversationId, choice)
 
     /** A local copy for saving or sharing; remote previews are downloaded first. */
     private suspend fun local(a: Attachment): Attachment {
         if (!a.isRemote) return a
-        val conv = _state.value.conversation?.id ?: "shared"
-        return attachmentStore.download(conv, a.uri, a.name.takeIf { '.' in it }, a.caption)
+        return attachmentStore.download(conversationId, a.uri, a.name.takeIf { '.' in it }, a.caption)
     }
 
     fun saveAttachment(a: Attachment, target: android.net.Uri) {
@@ -212,7 +106,7 @@ class ChatViewModel @Inject constructor(
                     appContext.contentResolver.openOutputStream(target)!!.use { out -> file.inputStream().use { it.copyTo(out) } }
                 }
             }
-            _state.update { it.copy(notice = result.fold({ "Saved ${a.name}." }, { e -> "Couldn't save ${a.name}: ${e.message}" })) }
+            sharedState.update { it.copy(notice = result.fold({ "Saved ${a.name}." }, { e -> "Couldn't save ${a.name}: ${e.message}" })) }
         }
     }
 
@@ -221,23 +115,22 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching { local(a) }
                 .onSuccess { file -> onReady(attachmentStore.shareUri(file), file.mime.takeIf { '*' !in it } ?: "application/octet-stream") }
-                .onFailure { e -> _state.update { it.copy(notice = "Couldn't share ${a.name}: ${e.message}") } }
+                .onFailure { e -> sharedState.update { it.copy(notice = "Couldn't share ${a.name}: ${e.message}") } }
         }
     }
 
     fun fileOf(a: Attachment): java.io.File = attachmentStore.file(a)
 
     fun attach(uris: List<android.net.Uri>) {
-        val conv = _state.value.conversation?.id ?: return
         if (uris.isEmpty()) return
-        _state.update { it.copy(importing = true) }
+        sharedState.update { it.copy(importing = true) }
         viewModelScope.launch {
             val added = mutableListOf<Attachment>()
             var failed: String? = null
             uris.take(10).forEach { uri ->
-                runCatching { attachmentStore.importUri(conv, uri) }.onSuccess { added += it }.onFailure { failed = it.message }
+                runCatching { attachmentStore.importUri(conversationId, uri) }.onSuccess { added += it }.onFailure { failed = it.message }
             }
-            _state.update { it.copy(importing = false, pending = it.pending + added, notice = failed?.let { m -> "Couldn't attach a file: $m" } ?: it.notice) }
+            sharedState.update { it.copy(importing = false, pending = it.pending + added, notice = failed?.let { m -> "Couldn't attach a file: $m" } ?: it.notice) }
         }
     }
 
@@ -246,57 +139,49 @@ class ChatViewModel @Inject constructor(
     /** The camera wrote into [file]; move it into the chat like any other pick. */
     fun attachPhoto(file: java.io.File, taken: Boolean) {
         if (!taken || !file.exists() || file.length() == 0L) { file.delete(); return }
-        val conv = _state.value.conversation?.id ?: return
         viewModelScope.launch {
-            val a = runCatching { file.inputStream().use { attachmentStore.saveStream(conv, file.name, it, "image/jpeg") } }.getOrNull()
+            val a = runCatching { file.inputStream().use { attachmentStore.saveStream(conversationId, file.name, it, "image/jpeg") } }.getOrNull()
             file.delete()
-            a?.let { att -> _state.update { it.copy(pending = it.pending + att) } }
+            a?.let { att -> sharedState.update { it.copy(pending = it.pending + att) } }
         }
     }
 
     fun removePending(a: Attachment) {
-        _state.update { it.copy(pending = it.pending - a) }
+        sharedState.update { it.copy(pending = it.pending - a) }
         runCatching { attachmentStore.file(a).delete() }
     }
 
-    fun stop() {
-        sendJob?.cancel()
-    }
+    fun stop() = runner.stop(conversationId)
 
-    fun clearNotice() = _state.update { it.copy(notice = null) }
+    fun clearNotice() = sharedState.update { it.copy(notice = null) }
 
     fun runCode(language: SandboxLanguage, code: String) {
         codeJob?.cancel()
-        _state.update { it.copy(codeRun = CodeRun(language, code)) }
+        sharedState.update { it.copy(codeRun = CodeRun(language, code)) }
         codeJob = viewModelScope.launch {
             val result = sandboxRunner.run(language, code)
-            _state.update { s -> s.codeRun?.takeIf { it.code == code }?.let { s.copy(codeRun = it.copy(result = result)) } ?: s }
+            sharedState.update { s -> s.codeRun?.takeIf { it.code == code }?.let { s.copy(codeRun = it.copy(result = result)) } ?: s }
         }
     }
 
     fun dismissCodeRun() {
         codeJob?.cancel()
-        _state.update { it.copy(codeRun = null) }
+        sharedState.update { it.copy(codeRun = null) }
     }
 
     fun cycleUnrestrictedMode() {
-        val conv = _state.value.conversation ?: return
+        val conv = sharedState.value.conversation ?: return
         val modes = UnrestrictedMode.entries
-        save(conv.copy(unrestrictedMode = modes[(conv.unrestrictedMode.ordinal + 1) % modes.size]))
+        runner.save(conversationId, conv.copy(unrestrictedMode = modes[(conv.unrestrictedMode.ordinal + 1) % modes.size]))
     }
 
     fun setAgent(agentId: String?) {
-        val conv = _state.value.conversation ?: return
-        save(conv.copy(agentId = agentId))
+        val conv = sharedState.value.conversation ?: return
+        runner.save(conversationId, conv.copy(agentId = agentId))
     }
 
     fun setRoutingStrategy(strategy: RoutingStrategy) {
-        val conv = _state.value.conversation ?: return
-        save(conv.copy(routingStrategy = strategy))
-    }
-
-    private fun save(conversation: Conversation) {
-        _state.update { it.copy(conversation = conversation) }
-        viewModelScope.launch { conversationRepository.save(conversation) }
+        val conv = sharedState.value.conversation ?: return
+        runner.save(conversationId, conv.copy(routingStrategy = strategy))
     }
 }

@@ -63,7 +63,6 @@ fun ChatScreen(
     onOpenAgents: () -> Unit,
     vm: ChatViewModel = hiltViewModel()
 ) {
-    LaunchedEffect(conversationId) { vm.init(conversationId) }
     LifecycleResumeEffect(Unit) {
         vm.refreshTermux()
         onPauseOrDispose { }
