@@ -69,7 +69,13 @@ class ToolLibraryRepository @Inject constructor(
                 throw IllegalStateException("Termux isn't set up. Finish steps 1-3 on the Agent runtime screen.")
             }
             val url = if (tool.type == SourceType.GITHUB_RELEASE) resolveRelease(tool.address) else null
-            val r = termux.run(HermesScripts.logged("tools.log", ToolboxScripts.install(tool, url)), "Install ${tool.name}", 20 * 60_000L)
+            // A GitHub repo's slug can differ from its binary's real name (e.g. "cli/cli" ships "gh"); once the
+            // actual download address is known, show and run it under the name the source itself declares.
+            val declared = (url ?: tool.address.takeIf { tool.type == SourceType.URL })
+                ?.let { ToolSource.baseNameFromUrl(it) }?.takeIf { it.isNotBlank() }
+            val effective = declared?.let { tool.copy(name = it) } ?: tool
+            if (effective.name != tool.name) update(effective.copy(status = InstallStatus.INSTALLING, message = ""))
+            val r = termux.run(HermesScripts.logged("tools.log", ToolboxScripts.install(effective, url)), "Install ${effective.name}", 20 * 60_000L)
             val log = (r.stdout + "\n" + r.stderr).trim()
             val ok = r.ok
             val message = when {
@@ -77,11 +83,11 @@ class ToolLibraryRepository @Inject constructor(
                 ok -> url?.let { "Installed from ${it.substringAfterLast('/')}" } ?: "Installed"
                 else -> log.lines().lastOrNull { it.isNotBlank() }?.take(200) ?: "Failed (exit ${r.exitCode})"
             }
-            InstallOutcome(tool, ok, log) to message
+            InstallOutcome(effective, ok, log) to message
         }.getOrElse { e -> InstallOutcome(tool, false, e.message.orEmpty()) to (e.message ?: "Install failed") }
 
         val (result, message) = outcome
-        val saved = tool.copy(
+        val saved = result.tool.copy(
             status = if (result.ok) InstallStatus.INSTALLED else InstallStatus.FAILED,
             message = message,
             updatedAt = System.currentTimeMillis()

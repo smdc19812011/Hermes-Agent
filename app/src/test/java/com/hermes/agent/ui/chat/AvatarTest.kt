@@ -30,8 +30,10 @@ class AvatarTest {
     @Test
     fun delegationIsTheHeadlineWhileASubAgentWorks() {
         val s = status(running("delegate_task", "Sub-agent Network scout: map the LAN"), running("scan_lan", "↳ Network scout: Scanning"))
-        assertEquals(AvatarStatus(AvatarState.DELEGATING, "Talking to Network scout"), s)
-        assertEquals("Talking to a sub-agent", status(running("delegate_task", "Sub-agent: do it")).text)
+        assertEquals(AvatarStatus(AvatarState.DELEGATING, "Talking to Network scout", "Network scout"), s)
+        val anonymous = status(running("delegate_task", "Sub-agent: do it"))
+        assertEquals("Talking to a sub-agent", anonymous.text)
+        assertEquals(null, anonymous.delegateAgentName)
     }
 
     @Test

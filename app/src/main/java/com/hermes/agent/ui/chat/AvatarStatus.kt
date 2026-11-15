@@ -4,7 +4,7 @@ import com.hermes.agent.domain.model.ToolActivity
 
 enum class AvatarState { IDLE, THINKING, TYPING, TOOL, SKILL, DELEGATING, GENERATING, READING, CONNECTING, WAITING, ERROR }
 
-data class AvatarStatus(val state: AvatarState, val text: String)
+data class AvatarStatus(val state: AvatarState, val text: String, val delegateAgentName: String? = null)
 
 /** What the Hermes avatar shows, worked out from the chat's streaming state. Pure, so it's unit-tested. */
 object AvatarLogic {
@@ -26,7 +26,7 @@ object AvatarLogic {
         // A sub-agent's own tools run while its delegate_task is open; the conversation with the agent is the headline.
         running.lastOrNull { it.tool == "delegate_task" }?.let { d ->
             val who = d.label.substringBefore(':').removePrefix("Sub-agent").trim()
-            return AvatarStatus(AvatarState.DELEGATING, if (who.isEmpty()) "Talking to a sub-agent" else "Talking to $who")
+            return AvatarStatus(AvatarState.DELEGATING, if (who.isEmpty()) "Talking to a sub-agent" else "Talking to $who", who.ifEmpty { null })
         }
         val t = running.lastOrNull()
         if (t != null) {

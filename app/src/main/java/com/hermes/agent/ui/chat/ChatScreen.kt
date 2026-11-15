@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -105,6 +106,8 @@ fun ChatScreen(
     }
 
     Box(Modifier.fillMaxSize()) {
+    Row(Modifier.fillMaxSize()) {
+    Box(Modifier.weight(1f)) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -200,8 +203,16 @@ fun ChatScreen(
                     }
                     value = System.currentTimeMillis()
                 }
+                val avatarStatus = AvatarLogic.status(state.isLoading, state.tools, state.approval != null, now - state.lastTokenAt, now - state.failedAt)
+                // Whoever delegate_task is talking to right now, shown beside Hermes: the saved agent's own look, or a neutral stand-in.
+                val delegateAvatar = when {
+                    avatarStatus.delegateAgentName == null -> null
+                    else -> agents.firstOrNull { it.name.equals(avatarStatus.delegateAgentName, ignoreCase = true) }
+                        ?.let { AgentAvatars.byId(it.avatar) } ?: AgentAvatars.UNKNOWN
+                }
                 ChatInput(
-                    avatar = AvatarLogic.status(state.isLoading, state.tools, state.approval != null, now - state.lastTokenAt, now - state.failedAt),
+                    avatar = avatarStatus,
+                    delegateAvatar = delegateAvatar,
                     value = inputText,
                     onValueChange = { inputText = it },
                     onSend = {
@@ -248,13 +259,14 @@ fun ChatScreen(
             }
         }
     }
-        TaskPanel(
-            tasks = state.panelTasks,
+    }
+        TaskPanelPane(tasks = state.panelTasks, open = state.panelOpen, onClear = { vm.clearPanel() })
+    }
+        TaskPanelHandle(
             open = state.panelOpen,
+            count = state.panelTasks.size,
             anyRunning = state.isLoading && state.panelTasks.any { !it.completed },
-            onOpen = { vm.setPanelOpen(true) },
-            onMinimise = { vm.setPanelOpen(false) },
-            onClear = { vm.clearPanel() }
+            onToggle = { vm.setPanelOpen(!state.panelOpen) }
         )
     }
 }
@@ -310,6 +322,7 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit) {
 @Composable
 private fun ChatInput(
     avatar: AvatarStatus,
+    delegateAvatar: AgentAvatarDef?,
     value: String,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
@@ -334,6 +347,17 @@ private fun ChatInput(
                         .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
                         .padding(2.dp)
                 ) { HermesAvatar(avatar, Modifier.fillMaxSize()) }
+                AnimatedVisibility(visible = delegateAvatar != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(14.dp).padding(horizontal = 2.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Box(
+                            Modifier.size(width = 34.dp, height = 35.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
+                                .padding(3.dp)
+                        ) { delegateAvatar?.let { AgentAvatarView(it, active = true, modifier = Modifier.fillMaxSize()) } }
+                    }
+                }
                 Spacer(Modifier.width(10.dp))
                 Text(
                     avatar.text,

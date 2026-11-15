@@ -23,6 +23,8 @@ data class AgentProfile(
     val tools: List<String> = emptyList(),
     /** Names of connections whose tools this agent always gets, whatever their scope. */
     val connections: List<String> = emptyList(),
+    /** One of ui.chat.AgentAvatars.PRESETS' ids; kept as a plain string so the domain model needs no UI dependency. */
+    val avatar: String = AgentAvatars.DEFAULT_ID,
     val createdByAi: Boolean = false
 ) {
     fun toJson(): String = JsonObject().apply {
@@ -34,6 +36,7 @@ data class AgentProfile(
         deviceAccess?.let { caps -> add("deviceAccess", JsonArray().apply { caps.forEach { add(it.name) } }) }
         add("tools", JsonArray().apply { tools.forEach { add(it) } })
         add("connections", JsonArray().apply { connections.forEach { add(it) } })
+        addProperty("avatar", avatar)
         addProperty("createdByAi", createdByAi)
     }.toString()
 
@@ -50,6 +53,7 @@ data class AgentProfile(
                 deviceAccess = o.getAsJsonArray("deviceAccess")?.let { list("deviceAccess").mapNotNull { n -> Capability.entries.firstOrNull { it.name == n } }.toSet() },
                 tools = list("tools"),
                 connections = list("connections"),
+                avatar = o.get("avatar")?.takeIf { it.isJsonPrimitive }?.asString?.ifBlank { null } ?: AgentAvatars.DEFAULT_ID,
                 createdByAi = o.get("createdByAi")?.asBoolean ?: false
             )
         }.getOrNull()

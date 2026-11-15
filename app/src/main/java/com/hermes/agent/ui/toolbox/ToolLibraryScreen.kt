@@ -105,13 +105,25 @@ fun ToolLibraryScreen(
             }
 
             Text("Quick add", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Tap again any time to redownload or retry a failed install.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ToolSource.PRESETS.forEach { p ->
-                    val present = state.tools.any { it.type == SourceType.PKG && it.address == p.address }
+                    val existing = state.tools.firstOrNull { it.type == SourceType.PKG && it.address == p.address }
+                    val statusIcon: (@Composable () -> Unit)? = when (existing?.status) {
+                        InstallStatus.INSTALLED -> { { Icon(Icons.Default.CheckCircle, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) } }
+                        InstallStatus.INSTALLING -> { { CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) } }
+                        InstallStatus.FAILED -> { { Icon(Icons.Default.ErrorOutline, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error) } }
+                        else -> null
+                    }
                     SuggestionChip(
-                        enabled = state.termuxReady && !present,
-                        onClick = { vm.addAndInstall(p.address) },
-                        label = { Text(p.label) }
+                        enabled = state.termuxReady && existing?.status != InstallStatus.INSTALLING,
+                        onClick = { vm.quickAdd(p.address) },
+                        label = { Text(p.label) },
+                        icon = statusIcon
                     )
                 }
             }

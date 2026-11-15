@@ -58,6 +58,12 @@ class ToolLibraryViewModel @Inject constructor(
         }
     }
 
+    /** Quick-add chips call this: redownloads/reinstalls if the preset is already in the library, whatever its status. */
+    fun quickAdd(address: String) {
+        val existing = _state.value.tools.firstOrNull { it.type == SourceType.PKG && it.address == address }
+        if (existing != null) install(existing.id) else addAndInstall(address)
+    }
+
     fun install(id: String) {
         viewModelScope.launch {
             val outcome = library.install(id)

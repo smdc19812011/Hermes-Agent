@@ -116,6 +116,9 @@ object ToolSource {
         }
     }
 
+    /** The name a download URL's own filename declares, e.g. ".../gh_2.40.0_linux_arm64.tar.gz" -> "gh". */
+    fun baseNameFromUrl(url: String): String = baseName(url.substringBefore('?').trimEnd('/').substringAfterLast('/'))
+
     /** "jq-linux-arm64" -> "jq", "ripgrep-14.1.0-aarch64-unknown-linux-musl.tar.gz" -> "ripgrep". */
     fun baseName(file: String): String {
         val noExt = file.replace(Regex("\\.(tar\\.gz|tar\\.xz|tar\\.bz2|tgz|zip|gz|tar|bin|sh|py)$"), "")

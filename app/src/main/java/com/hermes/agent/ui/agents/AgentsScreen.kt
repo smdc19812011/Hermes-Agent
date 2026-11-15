@@ -1,8 +1,11 @@
 package com.hermes.agent.ui.agents
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -17,6 +20,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.hermes.agent.domain.model.AgentAvatarDef
+import com.hermes.agent.domain.model.AgentAvatars
 import com.hermes.agent.domain.model.AgentProfile
 import com.hermes.agent.domain.model.Provider
 import com.hermes.agent.domain.model.Skill
@@ -95,7 +100,7 @@ fun AgentsScreen(onBack: () -> Unit, onOpenConnections: () -> Unit, vm: AgentsVi
                     a.models.takeIf { it.isNotEmpty() }?.joinToString(prefix = "Models: ") ?: "Uses the chat's models",
                     if (a.createdByAi) "Made by the AI" else ""
                 ).filter { it.isNotBlank() }.joinToString(" · ")
-                LibraryRow(Icons.Default.Psychology, a.name, detail, onOpen = { editAgent = a },
+                LibraryRow(Icons.Default.Psychology, a.name, detail, avatar = AgentAvatars.byId(a.avatar), onOpen = { editAgent = a },
                     onDelete = { confirmDelete = "agent ${a.name}" to { vm.deleteAgent(a.id) } })
             }
             OutlinedButton(onClick = { editAgent = AgentProfile(name = "") }, modifier = Modifier.fillMaxWidth()) {
@@ -123,10 +128,21 @@ private fun EmptyHint(text: String) =
     Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
 @Composable
-private fun LibraryRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, detail: String, onOpen: () -> Unit, onDelete: () -> Unit) {
+private fun LibraryRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    detail: String,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit,
+    avatar: AgentAvatarDef? = null
+) {
     Card(Modifier.fillMaxWidth().clickable(onClickLabel = "Edit $title", onClick = onOpen)) {
         Row(Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+            if (avatar != null) {
+                Box(Modifier.size(28.dp).background(MaterialTheme.colorScheme.surfaceVariant, androidx.compose.foundation.shape.CircleShape).padding(3.dp)) {
+                    com.hermes.agent.ui.chat.AgentAvatarView(avatar, active = false, modifier = Modifier.fillMaxSize())
+                }
+            } else Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(title, style = MaterialTheme.typography.titleSmall)
                 if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -197,6 +213,30 @@ private fun SkillEditor(skill: Skill, connectionNames: List<String>, error: Stri
     }
 }
 
+/** A row of selectable little robot avatars, with the current pick shown larger alongside. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AvatarPicker(selectedId: String, onSelect: (String) -> Unit) {
+    Text("Avatar", style = MaterialTheme.typography.titleSmall)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(
+            Modifier.size(52.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(14.dp)).padding(6.dp)
+        ) { com.hermes.agent.ui.chat.AgentAvatarView(AgentAvatars.byId(selectedId), active = true, modifier = Modifier.fillMaxSize()) }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+            AgentAvatars.PRESETS.forEach { def ->
+                val selected = def.id == selectedId
+                Box(
+                    Modifier.size(40.dp)
+                        .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
+                        .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp)) else Modifier)
+                        .clickable(onClickLabel = def.label) { onSelect(def.id) }
+                        .padding(5.dp)
+                ) { com.hermes.agent.ui.chat.AgentAvatarView(def, active = false, modifier = Modifier.fillMaxSize()) }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AgentEditor(
@@ -216,6 +256,7 @@ private fun AgentEditor(
     var access by remember { mutableStateOf(agent.deviceAccess ?: Capability.entries.toSet()) }
     var tools by remember { mutableStateOf(agent.tools.joinToString(", ")) }
     var connections by remember { mutableStateOf(agent.connections) }
+    var avatar by remember { mutableStateOf(agent.avatar) }
     var modelMenu by remember { mutableStateOf(false) }
 
     EditorScaffold(if (agent.name.isBlank()) "New agent" else "Edit agent", error, name.isNotBlank(), onDismiss, onSave = {
@@ -224,10 +265,12 @@ private fun AgentEditor(
             models = models.lines().map { it.trim() }.filter { it.isNotEmpty() },
             deviceAccess = if (limitAccess) access else null,
             tools = tools.split(',', '\n').map { it.trim() }.filter { it.isNotEmpty() },
-            connections = connections
+            connections = connections,
+            avatar = avatar
         ))
     }) {
         OutlinedTextField(name, { name = it }, label = { Text("Name") }, placeholder = { Text("Network scout") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        AvatarPicker(avatar, onSelect = { avatar = it })
         OutlinedTextField(description, { description = it }, label = { Text("What it's for") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(instructions, { instructions = it }, label = { Text("Instructions") }, minLines = 6,
             placeholder = { Text("You map the user's network. Scan first, then check unusual hosts, and report a table of devices.") },

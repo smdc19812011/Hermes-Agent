@@ -67,6 +67,13 @@ class ToolboxTest {
         assertEquals("scan", ToolSource.baseName("scan.sh"))
     }
 
+    @Test
+    fun declaredNameComesFromTheResolvedDownloadUrlNotTheRepoSlug() {
+        // "cli/cli" is the GitHub repo, but the program it ships is called "gh" — the asset's own filename says so.
+        assertEquals("gh", ToolSource.baseNameFromUrl("https://github.com/cli/cli/releases/download/v2.62.0/gh_2.62.0_linux_arm64.tar.gz"))
+        assertEquals("jq", ToolSource.baseNameFromUrl("https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-arm64?x=1"))
+    }
+
     // ---- install scripts through real bash, with apt/curl/pip stubbed ----
 
     private lateinit var home: File

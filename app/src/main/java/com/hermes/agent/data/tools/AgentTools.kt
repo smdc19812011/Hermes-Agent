@@ -71,6 +71,8 @@ class CreateAgentTool @Inject constructor(private val library: AgentLibraryRepos
             Capability.entries.map { it.name }),
         "tools" to arrayProp("Optional tool names it may use. Leave out for every tool its device access enables."),
         "connections" to arrayProp("Optional names of connections (Settings → Connections) whose tools it always gets"),
+        "avatar" to prop("string", "Optional look shown for it in chat and beside Hermes while it's delegated a task. Leave out to keep the default.",
+            com.hermes.agent.domain.model.AgentAvatars.PRESETS.map { it.id }),
         required = listOf("name", "instructions")
     )
     override fun label(args: JsonObject) = "${if (library.agentNamed(args.string("name").orEmpty()) != null) "Updating" else "Creating"} agent ${args.string("name")}"
@@ -89,6 +91,8 @@ class CreateAgentTool @Inject constructor(private val library: AgentLibraryRepos
             deviceAccess = access,
             tools = args.strings("tools"),
             connections = args.strings("connections"),
+            avatar = args.string("avatar")?.let { a -> com.hermes.agent.domain.model.AgentAvatars.PRESETS.firstOrNull { it.id == a }?.id }
+                ?: existing?.avatar ?: com.hermes.agent.domain.model.AgentAvatars.DEFAULT_ID,
             createdByAi = existing?.createdByAi ?: true
         ))
         return "${if (existing != null) "Updated" else "Created"} agent ${agent.name}. The user can start a chat with it from the new-chat button, " +
