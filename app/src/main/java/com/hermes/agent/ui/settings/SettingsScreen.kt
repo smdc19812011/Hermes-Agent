@@ -133,6 +133,20 @@ fun SettingsScreen(
                 steps = 18,
                 onChange = { v -> vm.update { it.copy(requestTimeoutSeconds = v.roundToInt()) } }
             )
+            SliderSetting(
+                title = "Requests per minute, per provider",
+                valueLabel = if (settings.maxRequestsPerMinute <= 0) "Unlimited" else "${settings.maxRequestsPerMinute}/min",
+                value = settings.maxRequestsPerMinute.toFloat(),
+                range = 0f..20f,
+                steps = 19,
+                onChange = { v -> vm.update { it.copy(maxRequestsPerMinute = v.roundToInt()) } }
+            )
+            Text(
+                "Paces requests to a model so it stays under its own rate limit instead of hitting one. If a model still answers " +
+                    "\"HTTP 429\" (rate limited), the app waits a minute and retries up to twice before giving up on it for this message.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             SectionHeader("Display")
             ChoiceList(

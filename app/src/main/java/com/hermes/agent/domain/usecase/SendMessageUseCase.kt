@@ -7,6 +7,7 @@ import com.hermes.agent.data.repository.LLMRepository
 import com.hermes.agent.data.repository.ProviderRepository
 import com.hermes.agent.data.repository.SettingsRepository
 import com.hermes.agent.data.repository.StreamEvent
+import com.hermes.agent.data.repository.ThrottleLogic
 import com.hermes.agent.data.tools.TextDiff
 import com.hermes.agent.data.tools.ToolApprovals
 import com.hermes.agent.data.tools.ToolRegistry
@@ -35,6 +36,10 @@ private const val MAX_TOOL_TIME_MS = 8 * 60_000L
 private const val MAX_TOOL_OUTPUT_CHARS = 80_000
 private const val MAX_RESULT_CHARS = 12_000
 private const val PANEL_OUTPUT_CHARS = 20_000
+// A model that answers "HTTP 429" is rate limited, not broken: wait a minute and try again before giving up on it.
+// Two retries (three attempts, a minute apart) is the "try again after 1 minute… persists on the 3rd minute" the user asked for.
+private const val RATE_LIMIT_RETRIES = 2
+private const val RATE_LIMIT_WAIT_MS = 60_000L
 
 class SendMessageUseCase @Inject constructor(
     private val conversationRepository: ConversationRepository,
@@ -49,7 +54,8 @@ class SendMessageUseCase @Inject constructor(
     private val mediaReader: com.hermes.agent.data.media.MediaReader,
     private val modelCatalog: com.hermes.agent.data.repository.ModelCatalogRepository,
     private val agentLibrary: com.hermes.agent.data.agents.AgentLibraryRepository,
-    private val connectionRepository: com.hermes.agent.data.connections.ConnectionRepository
+    private val connectionRepository: com.hermes.agent.data.connections.ConnectionRepository,
+    private val requestThrottle: com.hermes.agent.data.repository.RequestThrottle
 ) {
     operator fun invoke(
         conversation: Conversation,
@@ -207,7 +213,7 @@ class SendMessageUseCase @Inject constructor(
                     }
                     if (stopReason != null) break
                     val calls = try {
-                        streamRound(provider, model, attempt, systemPrompt(baseSystemPrompt, conversation, tools, installed, userInput), tools, settings, conversation.id)
+                        streamRoundRetrying(provider, model, attempt, systemPrompt(baseSystemPrompt, conversation, tools, installed, userInput), tools, settings, conversation.id)
                     } catch (e: Exception) {
                         // A model without vision/file input: send the attachments as descriptions instead.
                         val newest = attempt.turns.lastOrNull { it is ChatTurn.User } as? ChatTurn.User
@@ -236,7 +242,7 @@ class SendMessageUseCase @Inject constructor(
                         (if (stopReason != null) "If the task isn't finished, say exactly what's left so the user can ask you to continue. " else "") +
                         "Don't call tools."
                     try {
-                        streamRound(provider, model, attempt, listOfNotNull(systemPrompt(baseSystemPrompt, conversation, tools, installed, userInput), ask).joinToString("\n\n"),
+                        streamRoundRetrying(provider, model, attempt, listOfNotNull(systemPrompt(baseSystemPrompt, conversation, tools, installed, userInput), ask).joinToString("\n\n"),
                             tools, settings, conversation.id, finalAnswer = true)
                     } catch (e: CancellationException) {
                         throw e
@@ -273,7 +279,12 @@ class SendMessageUseCase @Inject constructor(
             return@flow
         }
 
-        emit(StreamChunk.Failed("Every model tried failed. Last error: $lastError"))
+        emit(StreamChunk.Failed(
+            if (ThrottleLogic.isRateLimited(lastError))
+                "Every model tried is still rate limited after a minute of retrying. This usually clears on its own within 5-24 hours " +
+                    "— try again later, or switch providers/models. Last error: $lastError"
+            else "Every model tried failed. Last error: $lastError"
+        ))
         emit(StreamChunk.Done)
     }
 
@@ -304,6 +315,10 @@ class SendMessageUseCase @Inject constructor(
             attempt.text.append("\n\n")
             if (echo) emit(StreamChunk.Token("\n\n"))
         }
+        // Applies even for a sub-agent's own calls (echo = false): they share the same provider's rate limit.
+        requestThrottle.waitForSlot(provider.id, settings.maxRequestsPerMinute) { resumeAt ->
+            emit(StreamChunk.Waiting(resumeAt, "Sending the next request"))
+        }
         llmRepository
             .streamTurn(provider, model, attempt.turns, systemPrompt, tools, settings.requestTimeoutSeconds, conversationId, finalAnswer)
             .collect { event ->
@@ -328,6 +343,38 @@ class SendMessageUseCase @Inject constructor(
                 }
             }
         return calls
+    }
+
+    /**
+     * [streamRound], but a "HTTP 429" (rate limited) failure waits a minute and tries the same round again, up to
+     * [RATE_LIMIT_RETRIES] times, with a live countdown shown to the user. Any other failure, or a 429 that's still
+     * happening after all the retries, is left for the caller to handle as before.
+     */
+    private suspend fun FlowCollector<StreamChunk>.streamRoundRetrying(
+        provider: Provider,
+        model: String,
+        attempt: Attempt,
+        systemPrompt: String?,
+        tools: List<AgentTool>,
+        settings: AgentSettings,
+        conversationId: String,
+        finalAnswer: Boolean = false,
+        echo: Boolean = true
+    ): List<ToolCall> {
+        var retriesLeft = RATE_LIMIT_RETRIES
+        while (true) {
+            try {
+                return streamRound(provider, model, attempt, systemPrompt, tools, settings, conversationId, finalAnswer, echo)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (retriesLeft <= 0 || !ThrottleLogic.isRateLimited(e.message)) throw e
+                retriesLeft--
+                val resumeAt = System.currentTimeMillis() + RATE_LIMIT_WAIT_MS
+                emit(StreamChunk.Waiting(resumeAt, "$model was rate limited; retrying"))
+                kotlinx.coroutines.delay(RATE_LIMIT_WAIT_MS)
+            }
+        }
     }
 
     /** A cheap, file-content-free diff preview for the approval card: just old_string vs new_string, no line numbers yet. */
@@ -523,7 +570,7 @@ class SendMessageUseCase @Inject constructor(
             try {
                 var rounds = 0
                 while (true) {
-                    val calls = streamRound(provider, model, sub, system, tools, settings, conversationId, finalAnswer = rounds >= MAX_TOOL_ROUNDS, echo = false)
+                    val calls = streamRoundRetrying(provider, model, sub, system, tools, settings, conversationId, finalAnswer = rounds >= MAX_TOOL_ROUNDS, echo = false)
                     if (calls.isEmpty() || rounds >= MAX_TOOL_ROUNDS) break
                     sub.turns += ChatTurn.Assistant(sub.roundText.toString(), calls)
                     ranTools = true
@@ -532,7 +579,7 @@ class SendMessageUseCase @Inject constructor(
                     rounds++
                 }
                 if (sub.roundText.isBlank() && ranTools) {
-                    streamRound(provider, model, sub, "$system\n\nNow write your report from the tool results above. Don't call tools.", tools, settings,
+                    streamRoundRetrying(provider, model, sub, "$system\n\nNow write your report from the tool results above. Don't call tools.", tools, settings,
                         conversationId, finalAnswer = true, echo = false)
                 }
                 chat.files += sub.files

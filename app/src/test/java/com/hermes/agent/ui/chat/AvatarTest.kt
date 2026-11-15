@@ -12,6 +12,27 @@ class AvatarTest {
         AvatarLogic.status(loading, tools.toList(), approval, sinceToken, sinceFail)
 
     @Test
+    fun countdownTakesPriorityOverEverythingElseWhileWaiting() {
+        val waiting = AvatarLogic.status(true, emptyList(), waitingForApproval = false, msSinceToken = 0, msSinceFailure = 0,
+            msUntilResume = 47_000, resumeLabel = "Sending the next request")
+        assertEquals(AvatarStatus(AvatarState.WAITING, "Sending the next request in 47s…"), waiting)
+        // Still overrides a pending approval or a running tool.
+        val overApproval = AvatarLogic.status(true, listOf(running("run_command", "ls")), waitingForApproval = true, msSinceToken = 0, msSinceFailure = 0,
+            msUntilResume = 5_000, resumeLabel = "Retrying")
+        assertEquals(AvatarState.WAITING, overApproval.state)
+        assertEquals("Retrying in 5s…", overApproval.text)
+        // A finished (or no) wait falls through to the ordinary status.
+        assertEquals(AvatarState.THINKING, status(sinceToken = 10_000).state)
+    }
+
+    @Test
+    fun countdownRoundsUpToTheNextWholeSecond() {
+        assertEquals("x in 1s…", AvatarLogic.status(true, emptyList(), false, 0, 0, msUntilResume = 1, resumeLabel = "x").text)
+        assertEquals("x in 1s…", AvatarLogic.status(true, emptyList(), false, 0, 0, msUntilResume = 1_000, resumeLabel = "x").text)
+        assertEquals("x in 2s…", AvatarLogic.status(true, emptyList(), false, 0, 0, msUntilResume = 1_001, resumeLabel = "x").text)
+    }
+
+    @Test
     fun statusFollowsWhatTheReplyIsDoing() {
         assertEquals(AvatarStatus(AvatarState.IDLE, "Ready"), status(loading = false))
         assertEquals(AvatarState.ERROR, status(loading = false, sinceFail = 1_000).state)

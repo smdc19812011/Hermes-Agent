@@ -7,6 +7,8 @@ data class AgentSettings(
     val customUnrestrictedPrompt: String = DEFAULT_UNRESTRICTED_PROMPT,
     val maxProviderAttempts: Int = 6,
     val requestTimeoutSeconds: Int = 60,
+    /** Caps outbound requests per provider to this many per minute; 0 = unlimited. Helps stay under a free model's own rate limit. */
+    val maxRequestsPerMinute: Int = 0,
     val showProviderBadge: Boolean = true,
     val theme: AppTheme = AppTheme.DARK,
     /** What the AI may reach through in-app tools. Empty by default: the user opts in per capability. */
@@ -57,6 +59,8 @@ sealed class StreamChunk {
     data class ProviderFailed(val providerName: String, val message: String) : StreamChunk()
     data class Failed(val message: String) : StreamChunk()
     data class Notice(val message: String) : StreamChunk()
+    /** The next request is being held back until [untilMs], either by the requests-per-minute setting or a 429 retry. */
+    data class Waiting(val untilMs: Long, val label: String) : StreamChunk()
     data class File(val attachment: Attachment) : StreamChunk()
     data object Done : StreamChunk()
 }

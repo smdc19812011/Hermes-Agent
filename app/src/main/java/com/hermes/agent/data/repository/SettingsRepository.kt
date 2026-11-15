@@ -25,6 +25,7 @@ class SettingsRepository @Inject constructor(
         val CUSTOM_UNRESTRICTED_PROMPT = stringPreferencesKey("custom_unrestricted_prompt")
         val MAX_PROVIDER_ATTEMPTS = intPreferencesKey("max_provider_attempts")
         val REQUEST_TIMEOUT = intPreferencesKey("request_timeout_seconds")
+        val MAX_REQUESTS_PER_MINUTE = intPreferencesKey("max_requests_per_minute")
         val SHOW_PROVIDER_BADGE = booleanPreferencesKey("show_provider_badge")
         val THEME = stringPreferencesKey("theme")
         val DEVICE_ACCESS = stringSetPreferencesKey("device_access")
@@ -52,6 +53,7 @@ class SettingsRepository @Inject constructor(
             customUnrestrictedPrompt = prefs[Keys.CUSTOM_UNRESTRICTED_PROMPT] ?: defaults.customUnrestrictedPrompt,
             maxProviderAttempts = prefs[Keys.MAX_PROVIDER_ATTEMPTS] ?: defaults.maxProviderAttempts,
             requestTimeoutSeconds = prefs[Keys.REQUEST_TIMEOUT] ?: defaults.requestTimeoutSeconds,
+            maxRequestsPerMinute = prefs[Keys.MAX_REQUESTS_PER_MINUTE] ?: defaults.maxRequestsPerMinute,
             showProviderBadge = prefs[Keys.SHOW_PROVIDER_BADGE] ?: defaults.showProviderBadge,
             theme = enumOr(prefs[Keys.THEME], defaults.theme),
             deviceAccess = prefs[Keys.DEVICE_ACCESS].orEmpty()
@@ -77,6 +79,7 @@ class SettingsRepository @Inject constructor(
             prefs[Keys.CUSTOM_UNRESTRICTED_PROMPT] = settings.customUnrestrictedPrompt
             prefs[Keys.MAX_PROVIDER_ATTEMPTS] = settings.maxProviderAttempts
             prefs[Keys.REQUEST_TIMEOUT] = settings.requestTimeoutSeconds
+            prefs[Keys.MAX_REQUESTS_PER_MINUTE] = settings.maxRequestsPerMinute
             prefs[Keys.SHOW_PROVIDER_BADGE] = settings.showProviderBadge
             prefs[Keys.THEME] = settings.theme.name
             prefs[Keys.DEVICE_ACCESS] = settings.deviceAccess.map { it.name }.toSet()

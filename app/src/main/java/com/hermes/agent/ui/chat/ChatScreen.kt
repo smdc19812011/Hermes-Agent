@@ -203,7 +203,10 @@ fun ChatScreen(
                     }
                     value = System.currentTimeMillis()
                 }
-                val avatarStatus = AvatarLogic.status(state.isLoading, state.tools, state.approval != null, now - state.lastTokenAt, now - state.failedAt)
+                val avatarStatus = AvatarLogic.status(
+                    state.isLoading, state.tools, state.approval != null, now - state.lastTokenAt, now - state.failedAt,
+                    msUntilResume = (state.waitingUntil - now).coerceAtLeast(0), resumeLabel = state.waitingLabel
+                )
                 // Whoever delegate_task is talking to right now, shown beside Hermes: the saved agent's own look, or a neutral stand-in.
                 val delegateAvatar = when {
                     avatarStatus.delegateAgentName == null -> null

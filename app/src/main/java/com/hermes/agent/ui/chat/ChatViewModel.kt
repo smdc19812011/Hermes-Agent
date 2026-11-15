@@ -45,7 +45,10 @@ data class ChatUiState(
     val failedAt: Long = 0,
     /** Every tool run in this chat view, newest last, for the task panel; kept across messages. */
     val panelTasks: List<ToolActivity> = emptyList(),
-    val panelOpen: Boolean = false
+    val panelOpen: Boolean = false,
+    /** >0 while a request is being deliberately held back (rate-limit pacing or a 429 retry), for the avatar's countdown. */
+    val waitingUntil: Long = 0,
+    val waitingLabel: String = ""
 )
 
 @HiltViewModel
@@ -107,7 +110,7 @@ class ChatViewModel @Inject constructor(
             sendMessageUseCase(conversation, input.trim(), history, files)
                 .catch { e -> _state.update { it.copy(notice = e.message ?: "Request failed", failedAt = System.currentTimeMillis()) } }
                 .onCompletion {
-                    _state.update { it.copy(isLoading = false, streamingContent = "", tools = emptyList(), approval = null, streamingFiles = emptyList()) }
+                    _state.update { it.copy(isLoading = false, streamingContent = "", tools = emptyList(), approval = null, streamingFiles = emptyList(), waitingUntil = 0) }
                 }
                 .collect { chunk ->
                     when (chunk) {
@@ -116,12 +119,14 @@ class ChatViewModel @Inject constructor(
                                 activeProviderName = chunk.providerName,
                                 activeModel = chunk.model,
                                 streamingContent = "",
-                                tools = emptyList()
+                                tools = emptyList(),
+                                waitingUntil = 0
                             )
                         }
                         is StreamChunk.Token -> _state.update {
-                            it.copy(streamingContent = it.streamingContent + chunk.text, lastTokenAt = System.currentTimeMillis())
+                            it.copy(streamingContent = it.streamingContent + chunk.text, lastTokenAt = System.currentTimeMillis(), waitingUntil = 0)
                         }
+                        is StreamChunk.Waiting -> _state.update { it.copy(waitingUntil = chunk.untilMs, waitingLabel = chunk.label) }
                         is StreamChunk.Tool -> _state.update { s ->
                             val a = chunk.activity
                             // A "completed" frame omits the label, so keep the running frame's label and only add fresh fields.

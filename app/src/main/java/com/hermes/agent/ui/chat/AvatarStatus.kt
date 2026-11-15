@@ -16,11 +16,15 @@ object AvatarLogic {
         tools: List<ToolActivity>,
         waitingForApproval: Boolean,
         msSinceToken: Long,
-        msSinceFailure: Long
+        msSinceFailure: Long,
+        /** >0 while a request is deliberately held back (rate-limit pacing, or a 429 backoff). */
+        msUntilResume: Long = 0,
+        resumeLabel: String = ""
     ): AvatarStatus {
         if (!isLoading) {
             return if (msSinceFailure < 5_000) AvatarStatus(AvatarState.ERROR, "Something went wrong") else AvatarStatus(AvatarState.IDLE, "Ready")
         }
+        if (msUntilResume > 0) return AvatarStatus(AvatarState.WAITING, "$resumeLabel in ${(msUntilResume + 999) / 1000}s…")
         if (waitingForApproval) return AvatarStatus(AvatarState.WAITING, "Waiting for your OK")
         val running = tools.filter { !it.completed }
         // A sub-agent's own tools run while its delegate_task is open; the conversation with the agent is the headline.
