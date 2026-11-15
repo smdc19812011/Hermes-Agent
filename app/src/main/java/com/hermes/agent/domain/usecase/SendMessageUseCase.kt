@@ -36,10 +36,11 @@ private const val MAX_TOOL_TIME_MS = 8 * 60_000L
 private const val MAX_TOOL_OUTPUT_CHARS = 80_000
 private const val MAX_RESULT_CHARS = 12_000
 private const val PANEL_OUTPUT_CHARS = 20_000
-// A model that answers "HTTP 429" is rate limited, not broken: wait a minute and try again before giving up on it.
-// Two retries (three attempts, a minute apart) is the "try again after 1 minute… persists on the 3rd minute" the user asked for.
-private const val RATE_LIMIT_RETRIES = 2
-private const val RATE_LIMIT_WAIT_MS = 60_000L
+// Any error a provider itself returns (rate limited, overloaded, a 5xx, a dropped connection) gets a minute to clear
+// before giving up on that model. Two retries (three attempts, a minute apart) is the "try again after 1 minute…
+// persists on the 3rd minute" the user asked for; an error a wait can never fix (a bad key, a missing model) skips this.
+private const val PROVIDER_ERROR_RETRIES = 2
+private const val PROVIDER_ERROR_WAIT_MS = 60_000L
 
 class SendMessageUseCase @Inject constructor(
     private val conversationRepository: ConversationRepository,
@@ -280,8 +281,8 @@ class SendMessageUseCase @Inject constructor(
         }
 
         emit(StreamChunk.Failed(
-            if (ThrottleLogic.isRateLimited(lastError))
-                "Every model tried is still rate limited after a minute of retrying. This usually clears on its own within 5-24 hours " +
+            if (ThrottleLogic.isRetriableProviderError(lastError))
+                "Every model tried is still failing after a minute of retrying each one. This usually clears on its own within 5-24 hours " +
                     "— try again later, or switch providers/models. Last error: $lastError"
             else "Every model tried failed. Last error: $lastError"
         ))
@@ -346,9 +347,12 @@ class SendMessageUseCase @Inject constructor(
     }
 
     /**
-     * [streamRound], but a "HTTP 429" (rate limited) failure waits a minute and tries the same round again, up to
-     * [RATE_LIMIT_RETRIES] times, with a live countdown shown to the user. Any other failure, or a 429 that's still
-     * happening after all the retries, is left for the caller to handle as before.
+     * [streamRound], but a failure the provider itself returned (rate limited, overloaded, a 5xx, a dropped
+     * connection…) waits a minute and tries the same round again, up to [PROVIDER_ERROR_RETRIES] times, with a live
+     * countdown shown to the user. Left alone, for the caller to handle immediately instead of waiting on: the two
+     * capability mismatches [looksLikeNoMediaSupport]/[looksLikeNoToolSupport] (switching the request is the fix,
+     * not time), anything [ThrottleLogic.isRetriableProviderError] says a wait can't fix (a bad key, a missing
+     * model), and whatever's still failing after all the retries.
      */
     private suspend fun FlowCollector<StreamChunk>.streamRoundRetrying(
         provider: Provider,
@@ -361,18 +365,19 @@ class SendMessageUseCase @Inject constructor(
         finalAnswer: Boolean = false,
         echo: Boolean = true
     ): List<ToolCall> {
-        var retriesLeft = RATE_LIMIT_RETRIES
+        var retriesLeft = PROVIDER_ERROR_RETRIES
         while (true) {
             try {
                 return streamRound(provider, model, attempt, systemPrompt, tools, settings, conversationId, finalAnswer, echo)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (retriesLeft <= 0 || !ThrottleLogic.isRateLimited(e.message)) throw e
+                val retriable = ThrottleLogic.isRetriableProviderError(e.message) && !looksLikeNoMediaSupport(e) && !looksLikeNoToolSupport(e)
+                if (retriesLeft <= 0 || !retriable) throw e
                 retriesLeft--
-                val resumeAt = System.currentTimeMillis() + RATE_LIMIT_WAIT_MS
-                emit(StreamChunk.Waiting(resumeAt, "$model was rate limited; retrying"))
-                kotlinx.coroutines.delay(RATE_LIMIT_WAIT_MS)
+                val resumeAt = System.currentTimeMillis() + PROVIDER_ERROR_WAIT_MS
+                emit(StreamChunk.Waiting(resumeAt, "$model hit a provider error; retrying"))
+                kotlinx.coroutines.delay(PROVIDER_ERROR_WAIT_MS)
             }
         }
     }

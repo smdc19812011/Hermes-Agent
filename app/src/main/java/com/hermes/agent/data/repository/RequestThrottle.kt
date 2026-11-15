@@ -4,7 +4,7 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Pure timing math behind [RequestThrottle] and the 429 backoff, kept Android-free so it's unit-tested. */
+/** Pure timing math behind [RequestThrottle] and the provider-error backoff, kept Android-free so it's unit-tested. */
 object ThrottleLogic {
     /** When the next request to a provider may go out, given the last one and a "requests per minute" cap (0/negative = unlimited). */
     fun nextAllowedAt(lastSentAtMs: Long, maxPerMinute: Int, nowMs: Long): Long {
@@ -12,8 +12,19 @@ object ThrottleLogic {
         return maxOf(nowMs, lastSentAtMs + 60_000L / maxPerMinute)
     }
 
-    /** OpenRouter and most others report a rate limit as "HTTP 429: …"; this is deliberately forgiving about the rest. */
-    fun isRateLimited(message: String?): Boolean = message != null && Regex("""\bHTTP\s*429\b""").containsMatchIn(message)
+    /** HTTP codes a wait can never fix: the key or the request itself is wrong, not the server being busy or full. */
+    private val NON_RETRIABLE_CODES = setOf(401, 403, 404)
+
+    /**
+     * Whether a failure from a provider (rate limited, overloaded, a 5xx, a dropped connection, a timeout…) is worth
+     * waiting a minute and trying again for, rather than giving up on this model right away. An error with no HTTP
+     * code at all (a network blip, a malformed response) is treated as worth retrying too.
+     */
+    fun isRetriableProviderError(message: String?): Boolean {
+        if (message == null) return false
+        val code = Regex("""\bHTTP\s*(\d{3})\b""").find(message)?.groupValues?.get(1)?.toIntOrNull()
+        return code == null || code !in NON_RETRIABLE_CODES
+    }
 }
 
 /**

@@ -23,12 +23,20 @@ class ThrottleLogicTest {
     }
 
     @Test
-    fun recognisesA429ButNotOtherFailures() {
-        assertTrue(ThrottleLogic.isRateLimited("HTTP 429: Provider returned error"))
-        assertTrue(ThrottleLogic.isRateLimited("rate limited, HTTP 429 from upstream"))
-        assertFalse(ThrottleLogic.isRateLimited("HTTP 500: Internal Server Error"))
-        assertFalse(ThrottleLogic.isRateLimited(null))
-        assertFalse(ThrottleLogic.isRateLimited("connection reset"))
+    fun retriesAnyProviderErrorExceptOnesAWaitCanNeverFix() {
+        // Worth a minute and another try: rate limits, server errors, and anything with no HTTP code at all
+        // (a dropped connection, a timeout, a malformed response) — those are exactly the transient cases.
+        assertTrue(ThrottleLogic.isRetriableProviderError("HTTP 429: Provider returned error"))
+        assertTrue(ThrottleLogic.isRetriableProviderError("rate limited, HTTP 429 from upstream"))
+        assertTrue(ThrottleLogic.isRetriableProviderError("HTTP 500: Internal Server Error"))
+        assertTrue(ThrottleLogic.isRetriableProviderError("HTTP 503: Service Unavailable"))
+        assertTrue(ThrottleLogic.isRetriableProviderError("connection reset"))
+        assertTrue(ThrottleLogic.isRetriableProviderError("timeout"))
+        // Not worth retrying: waiting a minute won't fix a bad key or a model that doesn't exist.
+        assertFalse(ThrottleLogic.isRetriableProviderError("HTTP 401: invalid API key"))
+        assertFalse(ThrottleLogic.isRetriableProviderError("HTTP 403: Forbidden"))
+        assertFalse(ThrottleLogic.isRetriableProviderError("HTTP 404: no endpoints found for model"))
+        assertFalse(ThrottleLogic.isRetriableProviderError(null))
     }
 
     @Test

@@ -142,8 +142,9 @@ fun SettingsScreen(
                 onChange = { v -> vm.update { it.copy(maxRequestsPerMinute = v.roundToInt()) } }
             )
             Text(
-                "Paces requests to a model so it stays under its own rate limit instead of hitting one. If a model still answers " +
-                    "\"HTTP 429\" (rate limited), the app waits a minute and retries up to twice before giving up on it for this message.",
+                "Paces requests to a model so it stays under its own rate limit instead of hitting one. If a model still fails — rate " +
+                    "limited, overloaded, a dropped connection — the app waits a minute and retries up to twice before giving up on it " +
+                    "for this message. A bad API key or a model that doesn't exist isn't retried; those won't fix themselves by waiting.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

@@ -13,3 +13,6 @@ app/build/
 keystore/
 keystore.properties
 *.jks
+
+# Kotlin compiler daemon diagnostics
+.kotlin/
