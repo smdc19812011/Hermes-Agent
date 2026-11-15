@@ -191,7 +191,7 @@ class SendMessageUseCase @Inject constructor(
                 while (true) {
                     if (round >= MAX_TOOL_ROUNDS) { budgetHit = true; break }
                     val calls = try {
-                        streamRound(provider, model, attempt, systemPrompt(baseSystemPrompt, conversation, tools, installed), tools, settings, conversation.id)
+                        streamRound(provider, model, attempt, systemPrompt(baseSystemPrompt, conversation, tools, installed, userInput), tools, settings, conversation.id)
                     } catch (e: Exception) {
                         // A model without vision/file input: send the attachments as descriptions instead.
                         val newest = attempt.turns.lastOrNull { it is ChatTurn.User } as? ChatTurn.User
@@ -218,7 +218,7 @@ class SendMessageUseCase @Inject constructor(
                     val ask = (if (budgetHit) "You've used all $MAX_TOOL_ROUNDS tool rounds for this message. " else "") +
                         "Now reply to the user in plain text from the tool results above: what you found, what it means, and anything you couldn't check. Don't call tools."
                     try {
-                        streamRound(provider, model, attempt, listOfNotNull(systemPrompt(baseSystemPrompt, conversation, tools, installed), ask).joinToString("\n\n"),
+                        streamRound(provider, model, attempt, listOfNotNull(systemPrompt(baseSystemPrompt, conversation, tools, installed, userInput), ask).joinToString("\n\n"),
                             tools, settings, conversation.id, finalAnswer = true)
                     } catch (e: CancellationException) {
                         throw e
@@ -375,7 +375,7 @@ class SendMessageUseCase @Inject constructor(
             .map { url -> Attachment(url.substringBefore('?').substringAfterLast('/').take(60).ifBlank { "image" }, "image/*", url) }
 
     /** Tells the model what it can reach, so it uses tools instead of claiming it has no access. */
-    private fun systemPrompt(base: String?, conversation: Conversation, tools: List<AgentTool>, installed: List<String>): String? {
+    private fun systemPrompt(base: String?, conversation: Conversation, tools: List<AgentTool>, installed: List<String>, userInput: String = ""): String? {
         if (tools.isEmpty() || conversation.unrestrictedMode == UnrestrictedMode.NO_SYSTEM) return base
         val reach = tools.map { it.capability.displayName.lowercase() }.distinct().joinToString()
         val note = "You are running inside the Hermes Agent app on the user's Android phone, with tools that act on this phone ($reach). " +
@@ -385,7 +385,9 @@ class SendMessageUseCase @Inject constructor(
             (if (installed.isNotEmpty()) " Already installed for you: ${installed.joinToString()}." else "") +
             (if (tools.any { it.name == "post_file" }) " To show the user an image, video, audio or any file, post it with post_file, generate_image or text_to_speech; " +
                 "you can build media in Termux (ffmpeg, ImageMagick, Python) and post the result." else "")
-        return listOfNotNull(base, note, libraryNote(tools)).joinToString("\n\n")
+        val targetNote = if (tools.any { it.capability == com.hermes.agent.domain.tools.Capability.INTERNET || it.capability == com.hermes.agent.domain.tools.Capability.NETWORK })
+            com.hermes.agent.data.tools.TargetUrls.targetNote(userInput) else null
+        return listOfNotNull(base, note, targetNote, libraryNote(tools)).joinToString("\n\n")
     }
 
     /** Lists skills and agents by name and description; full skill text loads on demand with read_skill. */
@@ -458,14 +460,17 @@ class SendMessageUseCase @Inject constructor(
         var tools = toolsFor(access, profile, activated).filter { it.name != "delegate_task" }
         val context = ToolContext(conversationId, access) // no delegate: sub-agents don't nest
         val who = profile?.name ?: "Sub-agent"
+        val contextText = args.get("context")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
         val system = listOfNotNull(
             profile?.let(::agentPrompt),
             "You are a sub-agent working for another AI in the Hermes Agent app on the user's Android phone. Do the task with your tools, " +
                 "then reply with a complete, factual report: what you did, what you found (exact values, IPs, paths), and anything you couldn't do. " +
                 "Your reply goes to the other AI, not the user.",
+            if (tools.any { it.capability == com.hermes.agent.domain.tools.Capability.INTERNET || it.capability == com.hermes.agent.domain.tools.Capability.NETWORK })
+                com.hermes.agent.data.tools.TargetUrls.targetNote("$task\n$contextText") else null,
             libraryNote(tools)
         ).joinToString("\n\n")
-        val prompt = listOfNotNull(args.get("context")?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() }?.let { "Context:\n$it" }, "Task:\n$task")
+        val prompt = listOfNotNull(contextText.takeIf { it.isNotBlank() }?.let { "Context:\n$it" }, "Task:\n$task")
             .joinToString("\n\n")
 
         var lastError: Exception? = null
