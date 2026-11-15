@@ -2,10 +2,12 @@ package com.hermes.agent.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hermes.agent.data.repository.EnvironmentNotesRepository
 import com.hermes.agent.data.repository.SettingsRepository
 import com.hermes.agent.domain.model.AgentSettings
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -16,6 +18,7 @@ import javax.inject.Inject
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val repository: SettingsRepository,
+    private val environmentNotesRepository: EnvironmentNotesRepository,
     providerRepository: com.hermes.agent.data.repository.ProviderRepository
 ) : ViewModel() {
 
@@ -26,6 +29,9 @@ class SettingsViewModel @Inject constructor(
     private val _settings = MutableStateFlow<AgentSettings?>(null)
     val settings: StateFlow<AgentSettings?> = _settings.asStateFlow()
 
+    val environmentNotes: StateFlow<String> = environmentNotesRepository.notes
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
     init {
         viewModelScope.launch { _settings.value = repository.settings.first() }
     }
@@ -34,5 +40,9 @@ class SettingsViewModel @Inject constructor(
         val next = transform(_settings.value ?: return)
         _settings.value = next
         viewModelScope.launch { repository.update(next) }
+    }
+
+    fun resetEnvironmentNotes() {
+        viewModelScope.launch { environmentNotesRepository.reset() }
     }
 }

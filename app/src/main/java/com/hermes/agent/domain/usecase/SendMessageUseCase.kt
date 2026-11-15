@@ -41,6 +41,14 @@ private const val PANEL_OUTPUT_CHARS = 20_000
 // persists on the 3rd minute" the user asked for; an error a wait can never fix (a bad key, a missing model) skips this.
 private const val PROVIDER_ERROR_RETRIES = 2
 private const val PROVIDER_ERROR_WAIT_MS = 60_000L
+// Asked once, silently, after a chat that ran shell commands or installs, so the app can remember what works and
+// what doesn't on this specific phone across every future chat. Kept strict about "NONE" so routine, unremarkable
+// commands don't pollute the shared notes with noise.
+private const val ENVIRONMENT_LEARNING_PROMPT = "Before you go: based only on what just happened running commands or installing things on this phone, " +
+    "did you learn anything specific about THIS device's own hardware or software — a missing package, an incompatible architecture or toolchain " +
+    "version, a permission quirk, a command that needed a workaround here — that would help a future chat avoid repeating a failed attempt, or know " +
+    "a working path right away? If so, reply with only those facts as short plain bullet points (no preamble, no \"let me know if\"). " +
+    "If nothing like that came up, reply with exactly: NONE"
 
 class SendMessageUseCase @Inject constructor(
     private val conversationRepository: ConversationRepository,
@@ -56,7 +64,8 @@ class SendMessageUseCase @Inject constructor(
     private val modelCatalog: com.hermes.agent.data.repository.ModelCatalogRepository,
     private val agentLibrary: com.hermes.agent.data.agents.AgentLibraryRepository,
     private val connectionRepository: com.hermes.agent.data.connections.ConnectionRepository,
-    private val requestThrottle: com.hermes.agent.data.repository.RequestThrottle
+    private val requestThrottle: com.hermes.agent.data.repository.RequestThrottle,
+    private val environmentNotes: com.hermes.agent.data.repository.EnvironmentNotesRepository
 ) {
     operator fun invoke(
         conversation: Conversation,
@@ -84,6 +93,9 @@ class SendMessageUseCase @Inject constructor(
         }.let { base ->
             if (agent == null || conversation.unrestrictedMode == UnrestrictedMode.NO_SYSTEM) base
             else listOfNotNull(agentPrompt(agent), base).joinToString("\n\n")
+        }.let { base ->
+            if (conversation.unrestrictedMode == UnrestrictedMode.NO_SYSTEM) base
+            else listOfNotNull(base, EnvironmentLearningLogic.systemPromptSection(environmentNotes.notes.first())).joinToString("\n\n")
         }
 
         // Routing orders providers; within each provider its models run primary, secondary, ... nth.
@@ -290,6 +302,9 @@ class SendMessageUseCase @Inject constructor(
             )
             providerRepository.updateResponseTime(provider.id, durationMs)
             emit(StreamChunk.Done)
+            if (EnvironmentLearningLogic.shouldAttempt(attempt.toolsRan, attempt.turns.filterIsInstance<ChatTurn.ToolResult>().mapTo(mutableSetOf()) { it.name })) {
+                runCatching { learnFromAttempt(provider, model, attempt, settings, conversation.id) }
+            }
             return@flow
         }
 
@@ -308,6 +323,23 @@ class SendMessageUseCase @Inject constructor(
         var roundText = StringBuilder()
         val log = LinkedHashMap<String, ToolActivity>()
         var toolsRan = false
+    }
+
+    /**
+     * After a chat that ran shell commands or installed something, asks the same model (no tools, a quiet side
+     * call the user never sees) whether it learned anything about this phone's own hardware/software — a missing
+     * package, an incompatible toolchain, a command that needs a workaround here — worth remembering for every
+     * future chat. Folded into the shared [environmentNotes] so later chats don't repeat the same failed attempt.
+     * Best-effort: the caller wraps this in [runCatching] so a failure here never affects the chat itself.
+     */
+    private suspend fun learnFromAttempt(provider: Provider, model: String, attempt: Attempt, settings: AgentSettings, conversationId: String) {
+        val turns = attempt.turns + ChatTurn.User(ENVIRONMENT_LEARNING_PROMPT)
+        val text = StringBuilder()
+        llmRepository.streamTurn(provider, model, turns, null, emptyList(), settings.requestTimeoutSeconds, conversationId).collect { event ->
+            if (event is StreamEvent.Text) text.append(event.text)
+        }
+        val learned = EnvironmentLearningLogic.parseLearning(text.toString()) ?: return
+        environmentNotes.save(EnvironmentLearningLogic.merge(environmentNotes.notes.first(), learned))
     }
 
     /** Streams one model turn into [attempt] and returns the tool calls it asked for. */

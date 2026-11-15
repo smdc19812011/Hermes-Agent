@@ -116,6 +116,9 @@ fun SettingsScreen(
                 maxLines = 8
             )
 
+            SectionHeader("Learned environment notes")
+            EnvironmentNotesSection(notes = vm.environmentNotes.collectAsStateWithLifecycle().value, onReset = vm::resetEnvironmentNotes)
+
             SectionHeader("Fallback and network")
             SliderSetting(
                 title = "Models to try per message",
@@ -233,6 +236,55 @@ private fun <T> ChoiceList(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun EnvironmentNotesSection(notes: String, onReset: () -> Unit) {
+    var confirmingReset by remember { mutableStateOf(false) }
+    Text(
+        "What the app has noticed works or doesn't on this phone's own hardware and software — learned automatically from " +
+            "running commands and installs in chats, and shared by every chat and project so the same failed attempt isn't repeated.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    if (notes.isBlank()) {
+        Text(
+            "Nothing learned yet.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+    } else {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+        ) {
+            Text(
+                notes,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(12.dp).heightIn(max = 220.dp).verticalScroll(rememberScrollState())
+            )
+        }
+    }
+    OutlinedButton(
+        onClick = { confirmingReset = true },
+        enabled = notes.isNotBlank(),
+        modifier = Modifier.padding(top = 8.dp)
+    ) { Text("Reset learned notes") }
+    if (confirmingReset) {
+        AlertDialog(
+            onDismissRequest = { confirmingReset = false },
+            title = { Text("Reset learned notes?") },
+            text = { Text("Everything the app has learned about this phone's hardware and software is cleared. This can't be undone.") },
+            confirmButton = {
+                TextButton(onClick = { onReset(); confirmingReset = false }) { Text("Reset") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingReset = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 
