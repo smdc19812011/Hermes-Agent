@@ -248,7 +248,10 @@ class SendMessageUseCase @Inject constructor(
                         // hit several distinct roadblocks in a row, each worth its own nudge, so this isn't capped on
                         // its own; the round/time/output caps above are what bound it overall.
                         val roundText = attempt.roundText.toString()
-                        if (attempt.toolsRan && UnfinishedIntentLogic.looksLikeUnfinishedIntent(roundText)) {
+                        // Gated on tools being offered at all, not on one having already run: the very first round of a
+                        // real task is exactly where a weaker model is most likely to announce "let me try X" instead of
+                        // calling it — waiting for a prior tool call to "prove" this is a working-task reply missed that case.
+                        if (tools.isNotEmpty() && UnfinishedIntentLogic.looksLikeUnfinishedIntent(roundText)) {
                             attempt.turns += ChatTurn.Assistant(roundText, emptyList())
                             attempt.turns += ChatTurn.User("You just said you'd do that — go ahead and call the tool for it now, in this reply, instead of describing it again.")
                             round++
@@ -623,7 +626,7 @@ class SendMessageUseCase @Inject constructor(
                     val calls = streamRoundRetrying(provider, model, sub, system, tools, settings, conversationId, finalAnswer = rounds >= MAX_TOOL_ROUNDS, echo = false)
                     if (calls.isEmpty()) {
                         val roundText = sub.roundText.toString()
-                        if (rounds < MAX_TOOL_ROUNDS && ranTools && UnfinishedIntentLogic.looksLikeUnfinishedIntent(roundText)) {
+                        if (rounds < MAX_TOOL_ROUNDS && tools.isNotEmpty() && UnfinishedIntentLogic.looksLikeUnfinishedIntent(roundText)) {
                             sub.turns += ChatTurn.Assistant(roundText, emptyList())
                             sub.turns += ChatTurn.User("You just said you'd do that — go ahead and call the tool for it now, instead of describing it again.")
                             rounds++
