@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.hermes.agent.data.repository.ThrottleLogic
 import com.hermes.agent.data.sandbox.SandboxLanguage
 import com.hermes.agent.domain.model.*
 import com.hermes.agent.ui.sandbox.ResultPanel
@@ -213,9 +214,16 @@ fun ChatScreen(
                     else -> agents.firstOrNull { it.name.equals(avatarStatus.delegateAgentName, ignoreCase = true) }
                         ?.let { AgentAvatars.byId(it.avatar) } ?: AgentAvatars.UNKNOWN
                 }
+                // How many requests this app has sent the active provider today/this minute, re-read on every tick so it stays current.
+                val requestStatsText = state.activeProviderId?.let { id ->
+                    val counts = vm.requestStats(id)
+                    val usage = state.openRouterUsage
+                    ThrottleLogic.formatRequestStats(counts.today, counts.lastMinute, usage?.rateLimitRequests, usage?.rateLimitInterval)
+                }
                 ChatInput(
                     avatar = avatarStatus,
                     delegateAvatar = delegateAvatar,
+                    requestStatsText = requestStatsText,
                     value = inputText,
                     onValueChange = { inputText = it },
                     onSend = {
@@ -326,6 +334,7 @@ private fun NoticeBar(text: String, onDismiss: () -> Unit) {
 private fun ChatInput(
     avatar: AvatarStatus,
     delegateAvatar: AgentAvatarDef?,
+    requestStatsText: String?,
     value: String,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
@@ -374,6 +383,16 @@ private fun ChatInput(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite }
                 )
+                requestStatsText?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                }
             }
             if (pending.isNotEmpty() || importing) {
                 Row(

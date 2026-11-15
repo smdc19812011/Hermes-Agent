@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.ZoneId
 
 class ThrottleLogicTest {
     @Test
@@ -52,5 +53,39 @@ class ThrottleLogicTest {
         waited = null
         throttle.waitForSlot("providerB", maxPerMinute = 6) { waited = it }
         assertEquals(null, waited)
+    }
+
+    @Test
+    fun sameLocalDayUsesTheDeviceTimeZoneNotUtc() {
+        val zone = ZoneId.of("Asia/Manila") // UTC+8, so 2 AM local is still the previous UTC day
+        val lateEveningUtc = 1_700_000_000_000L // 2023-11-14 22:13:20 UTC == 2023-11-15 06:13:20 in Manila
+        val justAfterMidnightLocal = lateEveningUtc + 3 * 60 * 60_000L // +3h is still 2023-11-15 in Manila
+        assertTrue(ThrottleLogic.isSameLocalDay(lateEveningUtc, justAfterMidnightLocal, zone))
+        assertFalse(ThrottleLogic.isSameLocalDay(lateEveningUtc, justAfterMidnightLocal, ZoneId.of("UTC")))
+    }
+
+    @Test
+    fun countInWindowCountsOnlyWhatsStillInRangeAndNotFromTheFuture() {
+        val now = 100_000L
+        val timestamps = listOf(now - 70_000, now - 59_000, now - 1_000, now, now + 5_000)
+        assertEquals(3, ThrottleLogic.countInWindow(timestamps, now, windowMs = 60_000))
+    }
+
+    @Test
+    fun formatsTheOnScreenLineWithAndWithoutAKnownLimit() {
+        assertEquals("12 today · 3/min", ThrottleLogic.formatRequestStats(12, 3, null, null))
+        assertEquals("12 today · 3/min · limit 20/10s", ThrottleLogic.formatRequestStats(12, 3, 20, "10s"))
+    }
+
+    @Test
+    fun throttleTracksRequestCountsAlongsideThePacing() = runTest {
+        val throttle = RequestThrottle()
+        assertEquals(RequestCounts(0, 0), throttle.counts("p"))
+        repeat(3) { throttle.waitForSlot("p", maxPerMinute = 0) { } }
+        val counts = throttle.counts("p")
+        assertEquals(3, counts.today)
+        assertEquals(3, counts.lastMinute)
+        // A different provider's traffic is counted separately.
+        assertEquals(RequestCounts(0, 0), throttle.counts("other"))
     }
 }

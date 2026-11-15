@@ -4,7 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermes.agent.data.repository.ConversationRepository
 import com.hermes.agent.data.repository.LLMRepository
+import com.hermes.agent.data.repository.OpenRouterUsage
+import com.hermes.agent.data.repository.OpenRouterUsageRepository
 import com.hermes.agent.data.repository.ProviderRepository
+import com.hermes.agent.data.repository.RequestCounts
+import com.hermes.agent.data.repository.RequestThrottle
 import com.hermes.agent.data.repository.SettingsRepository
 import com.hermes.agent.data.sandbox.SandboxLanguage
 import com.hermes.agent.data.sandbox.SandboxResult
@@ -28,8 +32,11 @@ data class ChatUiState(
     val streamingContent: String = "",
     val tools: List<ToolActivity> = emptyList(),
     val approval: PendingApproval? = null,
+    val activeProviderId: String? = null,
     val activeProviderName: String? = null,
     val activeModel: String? = null,
+    /** OpenRouter's own report for the active provider's key, refreshed periodically; null off-OpenRouter or not yet loaded. */
+    val openRouterUsage: OpenRouterUsage? = null,
     val isLoading: Boolean = false,
     val notice: String? = null,
     val showProviderBadge: Boolean = true,
@@ -60,6 +67,8 @@ class ChatViewModel @Inject constructor(
     private val sandboxRunner: SandboxRunner,
     private val toolApprovals: ToolApprovals,
     private val attachmentStore: com.hermes.agent.data.media.AttachmentStore,
+    private val requestThrottle: RequestThrottle,
+    private val openRouterUsageRepository: OpenRouterUsageRepository,
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
     settingsRepository: SettingsRepository,
     agentLibrary: com.hermes.agent.data.agents.AgentLibraryRepository
@@ -98,6 +107,18 @@ class ChatViewModel @Inject constructor(
 
     fun refreshTermux() = _state.update { it.copy(termuxReady = sandboxRunner.termuxReady()) }
 
+    /** How many requests this app has sent [providerId] today and in the last minute; cheap and synchronous for the UI to poll. */
+    fun requestStats(providerId: String): RequestCounts = requestThrottle.counts(providerId)
+
+    /** Pulls OpenRouter's own usage/rate-limit report for this provider (a no-op, returning null, for any other type). */
+    private fun refreshOpenRouterUsage(providerId: String) {
+        viewModelScope.launch {
+            val provider = providerRepository.getById(providerId) ?: return@launch
+            val usage = runCatching { openRouterUsageRepository.usage(provider) }.getOrNull()
+            if (_state.value.activeProviderId == providerId) _state.update { it.copy(openRouterUsage = usage) }
+        }
+    }
+
     fun send(input: String) {
         val conversation = _state.value.conversation ?: return
         val files = _state.value.pending
@@ -114,14 +135,18 @@ class ChatViewModel @Inject constructor(
                 }
                 .collect { chunk ->
                     when (chunk) {
-                        is StreamChunk.ProviderSelected -> _state.update {
-                            it.copy(
-                                activeProviderName = chunk.providerName,
-                                activeModel = chunk.model,
-                                streamingContent = "",
-                                tools = emptyList(),
-                                waitingUntil = 0
-                            )
+                        is StreamChunk.ProviderSelected -> {
+                            _state.update {
+                                it.copy(
+                                    activeProviderId = chunk.providerId,
+                                    activeProviderName = chunk.providerName,
+                                    activeModel = chunk.model,
+                                    streamingContent = "",
+                                    tools = emptyList(),
+                                    waitingUntil = 0
+                                )
+                            }
+                            refreshOpenRouterUsage(chunk.providerId)
                         }
                         is StreamChunk.Token -> _state.update {
                             it.copy(streamingContent = it.streamingContent + chunk.text, lastTokenAt = System.currentTimeMillis(), waitingUntil = 0)
