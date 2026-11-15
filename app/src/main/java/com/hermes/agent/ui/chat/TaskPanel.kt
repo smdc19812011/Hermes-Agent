@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -111,6 +112,40 @@ fun BoxScope.TaskPanelHandle(open: Boolean, count: Int, anyRunning: Boolean, onT
 }
 
 @Composable
+private fun PlainOutput(text: String) {
+    SelectionContainer {
+        Text(
+            text,
+            fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 16.sp,
+            modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(8.dp)
+        )
+    }
+}
+
+/** [edit_file]/[write_file] return a unified-diff-style block ("+ "/"- "/"  " lines); tint added/removed lines like a code review. */
+@Composable
+private fun DiffOutput(text: String) {
+    val addBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+    val removeBg = MaterialTheme.colorScheme.error.copy(alpha = 0.18f)
+    SelectionContainer {
+        Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+            text.lines().forEach { line ->
+                val bg = when {
+                    line.startsWith("+ ") -> addBg
+                    line.startsWith("- ") -> removeBg
+                    else -> Color.Transparent
+                }
+                Text(
+                    line.ifEmpty { " " },
+                    fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 16.sp,
+                    modifier = Modifier.fillMaxWidth().background(bg).padding(horizontal = 8.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun TaskRow(task: ToolActivity) {
     var expanded by remember(task.id) { mutableStateOf(!task.completed) }
     val border = when {
@@ -136,13 +171,7 @@ private fun TaskRow(task: ToolActivity) {
             if (expanded && task.output.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth()) {
-                    SelectionContainer {
-                        Text(
-                            task.output,
-                            fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 16.sp,
-                            modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(8.dp)
-                        )
-                    }
+                    if (task.tool == "edit_file" || task.tool == "write_file") DiffOutput(task.output) else PlainOutput(task.output)
                 }
             }
         }

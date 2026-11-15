@@ -23,6 +23,8 @@ const val MAX_ATTACHMENT_BYTES = 100L * 1024 * 1024
 const val TERMUX_CHUNK_BYTES = 36 * 1024
 /** Pushes travel inside the intent (binder limit ~1 MB, strings count twice): 96 KB raw = 128 KB base64. */
 const val PUSH_CHUNK_BYTES = 96 * 1024
+/** Generous for source files; keeps read_file/edit_file responsive rather than chewing through a huge log or binary. */
+const val MAX_TEXT_FILE_BYTES = 2L * 1024 * 1024
 
 /** Files posted in chats, kept under files/attachments/<conversation>/. */
 @Singleton
@@ -136,6 +138,65 @@ class AttachmentStore @Inject constructor(
             }
         }
         return destination
+    }
+
+    /** Whether a Termux-side path exists and is a plain file. */
+    suspend fun fileExistsInTermux(path: String): Boolean {
+        if (!termux.isInstalled() || !termux.hasPermission()) error("Termux isn't set up. Finish steps 1-3 on the Agent runtime screen.")
+        val q = MediaScripts.quotePath(path)
+        val r = termux.run("[ -f $q ] && echo yes || echo no", "Check file", 20_000)
+        r.termuxError?.let { error(it) }
+        return r.stdout.trim() == "yes"
+    }
+
+    /** Reads a Termux-side text file as UTF-8, in base64 chunks like [pullFromTermux]; capped so a huge file errors instead of stalling. */
+    suspend fun readTextFromTermux(path: String, maxBytes: Long = MAX_TEXT_FILE_BYTES): String = withContext(Dispatchers.IO) {
+        if (!termux.isInstalled() || !termux.hasPermission()) error("Termux isn't set up. Finish steps 1-3 on the Agent runtime screen.")
+        val q = MediaScripts.quotePath(path)
+        val size = termux.run(MediaScripts.size(q), "Measure file", 20_000).let { r ->
+            r.termuxError?.let { error(it) }
+            r.stdout.trim().toLongOrNull() ?: error("No such file: $path")
+        }
+        require(size <= maxBytes) { "${path.substringAfterLast('/')} is ${size / 1024} KB; the limit here is ${maxBytes / 1024} KB." }
+        if (size == 0L) return@withContext ""
+        val out = java.io.ByteArrayOutputStream(size.toInt())
+        var index = 0L
+        var copied = 0L
+        while (copied < size) {
+            val r = termux.run(MediaScripts.chunk(q, index, TERMUX_CHUNK_BYTES), "Read file", 30_000)
+            r.termuxError?.let { error(it) }
+            val bytes = Base64.getDecoder().decode(r.stdout.trim())
+            val expected = minOf(TERMUX_CHUNK_BYTES.toLong(), size - copied)
+            check(bytes.size.toLong() == expected) { "Read of $path was cut short at ${copied + bytes.size} of $size bytes." }
+            out.write(bytes)
+            copied += bytes.size
+            index++
+        }
+        out.toByteArray().toString(Charsets.UTF_8)
+    }
+
+    /** Writes [text] to a Termux-side path, creating it (and its parent folders) or overwriting it, in base64 heredoc chunks. */
+    suspend fun writeTextToTermux(text: String, destination: String): Unit = withContext(Dispatchers.IO) {
+        if (!termux.isInstalled() || !termux.hasPermission()) error("Termux isn't set up. Finish steps 1-3 on the Agent runtime screen.")
+        val q = MediaScripts.quotePath(destination)
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        if (bytes.isEmpty()) {
+            val r = termux.run("mkdir -p \"\$(dirname $q)\" && : > $q", "Write file", 20_000)
+            r.termuxError?.let { error(it) }
+            check(r.ok) { "Writing $destination failed: ${r.stderr.take(200)}" }
+            return@withContext
+        }
+        var offset = 0
+        var first = true
+        while (offset < bytes.size) {
+            val end = minOf(offset + PUSH_CHUNK_BYTES, bytes.size)
+            val b64 = Base64.getEncoder().encodeToString(bytes.copyOfRange(offset, end))
+            val r = termux.run(MediaScripts.appendChunk(q, b64, first), "Write file", 30_000)
+            r.termuxError?.let { error(it) }
+            check(r.exitCode == 0) { "Writing $destination failed: ${r.stderr.take(200)}" }
+            first = false
+            offset = end
+        }
     }
 
     private suspend fun save(conversationId: String, name: String, mime: String?, caption: String, write: suspend (File) -> Unit): Attachment =

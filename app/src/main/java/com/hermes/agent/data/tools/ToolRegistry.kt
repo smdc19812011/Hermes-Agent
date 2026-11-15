@@ -48,7 +48,10 @@ class ToolRegistry @Inject constructor(
     readSkill: ReadSkillTool,
     saveSkill: SaveSkillTool,
     createAgent: CreateAgentTool,
-    delegateTask: DelegateTaskTool
+    delegateTask: DelegateTaskTool,
+    readFile: ReadFileTool,
+    editFile: EditFileTool,
+    writeFile: WriteFileTool
 ) {
     val all: List<AgentTool> = listOf(
         networkInfo, lanScan, portScan, dnsLookup, tcpPing, http, search,
@@ -57,7 +60,8 @@ class ToolRegistry @Inject constructor(
         usbDevices, usbAccess, usbSerial, usbTransfer, usbHid, usbPrint, usbStorage, usbMidi, usbDriverInstall, usbDriverCommand,
         postFile, imageSearch, generateImage, textToSpeech, readAttachment,
         shell, listTools, installTool, useAttachment,
-        readSkill, saveSkill, createAgent, delegateTask
+        readSkill, saveSkill, createAgent, delegateTask,
+        readFile, editFile, writeFile
     )
 
     fun enabled(capabilities: Set<Capability>): List<AgentTool> = all.filter { it.capability in capabilities }

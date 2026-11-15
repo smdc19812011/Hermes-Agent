@@ -7,6 +7,7 @@ import com.hermes.agent.data.repository.LLMRepository
 import com.hermes.agent.data.repository.ProviderRepository
 import com.hermes.agent.data.repository.SettingsRepository
 import com.hermes.agent.data.repository.StreamEvent
+import com.hermes.agent.data.tools.TextDiff
 import com.hermes.agent.data.tools.ToolApprovals
 import com.hermes.agent.data.tools.ToolRegistry
 import com.hermes.agent.domain.model.*
@@ -16,6 +17,7 @@ import com.hermes.agent.data.media.AttachmentEncoder
 import com.hermes.agent.data.media.ImageShrinker
 import com.hermes.agent.domain.tools.ToolCall
 import com.hermes.agent.domain.tools.ToolContext
+import com.hermes.agent.domain.tools.string
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
@@ -312,6 +314,24 @@ class SendMessageUseCase @Inject constructor(
         return calls
     }
 
+    /** A cheap, file-content-free diff preview for the approval card: just old_string vs new_string, no line numbers yet. */
+    private fun editPreview(args: JsonObject): String {
+        val path = args.string("path") ?: "edit_file"
+        val old = args.get("old_string")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty().split('\n')
+        val new = args.get("new_string")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty().split('\n')
+        val changed = TextDiff.diffLines(old, new)
+            ?: (old.map { TextDiff.DiffLine(TextDiff.LineType.REMOVE, it) } + new.map { TextDiff.DiffLine(TextDiff.LineType.ADD, it) })
+        return "$path\n${TextDiff.render(changed)}"
+    }
+
+    private fun writePreview(args: JsonObject): String {
+        val path = args.string("path") ?: "write_file"
+        val lines = (args.get("content")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()).split('\n')
+        val shown = lines.take(15).joinToString("\n")
+        val more = (lines.size - 15).takeIf { it > 0 }?.let { "\n… ${it} more line${if (it != 1) "s" else ""}" }.orEmpty()
+        return "$path (${lines.size} line${if (lines.size != 1) "s" else ""}):\n$shown$more"
+    }
+
     private suspend fun FlowCollector<StreamChunk>.runTool(
         call: ToolCall,
         tools: List<AgentTool>,
@@ -329,7 +349,11 @@ class SendMessageUseCase @Inject constructor(
         if (tool.requiresApproval(args) && !approvals.isAllowedInChat(context.conversationId, tool.name)) {
             emit(StreamChunk.ApprovalRequested("", ApprovalRequest(
                 runId = call.id,
-                command = activity.label,
+                command = when (tool.name) {
+                    "edit_file" -> editPreview(args)
+                    "write_file" -> writePreview(args)
+                    else -> activity.label
+                },
                 description = if (tool.capability == com.hermes.agent.domain.tools.Capability.AGENTS) "Skills & agents: the AI wants to save this for every chat."
                     else "${tool.capability.displayName}: the AI wants to run this on your phone.",
                 choices = listOf("once", "session", "deny"),
@@ -384,7 +408,9 @@ class SendMessageUseCase @Inject constructor(
             (if (tools.any { it.name == "install_tool" }) " If a program you need is missing, install it with install_tool." else "") +
             (if (installed.isNotEmpty()) " Already installed for you: ${installed.joinToString()}." else "") +
             (if (tools.any { it.name == "post_file" }) " To show the user an image, video, audio or any file, post it with post_file, generate_image or text_to_speech; " +
-                "you can build media in Termux (ffmpeg, ImageMagick, Python) and post the result." else "")
+                "you can build media in Termux (ffmpeg, ImageMagick, Python) and post the result." else "") +
+            (if (tools.any { it.name == "edit_file" }) " To change code or text files, read_file first, then edit_file with the exact old text to replace " +
+                "(not the whole file) — the user sees a diff of just that change. Use write_file only for a new file or a full rewrite." else "")
         val targetNote = if (tools.any { it.capability == com.hermes.agent.domain.tools.Capability.INTERNET || it.capability == com.hermes.agent.domain.tools.Capability.NETWORK })
             com.hermes.agent.data.tools.TargetUrls.targetNote(userInput) else null
         return listOfNotNull(base, note, targetNote, libraryNote(tools)).joinToString("\n\n")
