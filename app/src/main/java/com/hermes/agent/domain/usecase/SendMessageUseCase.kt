@@ -41,6 +41,9 @@ private const val PANEL_OUTPUT_CHARS = 20_000
 // persists on the 3rd minute" the user asked for; an error a wait can never fix (a bad key, a missing model) skips this.
 private const val PROVIDER_ERROR_RETRIES = 2
 private const val PROVIDER_ERROR_WAIT_MS = 60_000L
+// A weaker model sometimes ends a reply on "let me do X" without calling the tool for X. Bounded separately from
+// the tool-round caps above so a model that keeps doing this can't burn the whole budget on empty promises.
+private const val UNFINISHED_INTENT_NUDGES = 2
 
 class SendMessageUseCase @Inject constructor(
     private val conversationRepository: ConversationRepository,
@@ -204,6 +207,7 @@ class SendMessageUseCase @Inject constructor(
             try {
                 var round = 0
                 var stopReason: String? = null
+                var intentNudgesLeft = UNFINISHED_INTENT_NUDGES
                 while (true) {
                     stopReason = when {
                         round >= MAX_TOOL_ROUNDS -> "You've used all $MAX_TOOL_ROUNDS tool rounds for this message."
@@ -230,7 +234,19 @@ class SendMessageUseCase @Inject constructor(
                         if (!onlyAgentTools) emit(StreamChunk.Notice("$model doesn't support tools, so it answered without device access. Pick a model marked \"tools\"."))
                         continue
                     }
-                    if (calls.isEmpty()) break
+                    if (calls.isEmpty()) {
+                        // A weaker model sometimes ends its turn on "let me do X" without ever calling the tool for
+                        // X. Give it a couple of chances to actually act before accepting that as the final answer.
+                        val roundText = attempt.roundText.toString()
+                        if (intentNudgesLeft > 0 && attempt.toolsRan && UnfinishedIntentLogic.looksLikeUnfinishedIntent(roundText)) {
+                            intentNudgesLeft--
+                            attempt.turns += ChatTurn.Assistant(roundText, emptyList())
+                            attempt.turns += ChatTurn.User("You just said you'd do that — go ahead and call the tool for it now, in this reply, instead of describing it again.")
+                            round++
+                            continue
+                        }
+                        break
+                    }
                     attempt.turns += ChatTurn.Assistant(attempt.roundText.toString(), calls)
                     for (call in calls) attempt.turns += runTool(call, tools, toolContext, attempt)
                     if (!toolsOff && activated.addAll(skillConnections(calls))) tools = toolsFor(access, agent, activated)
@@ -574,9 +590,21 @@ class SendMessageUseCase @Inject constructor(
             var ranTools = false
             try {
                 var rounds = 0
+                var intentNudgesLeft = UNFINISHED_INTENT_NUDGES
                 while (true) {
                     val calls = streamRoundRetrying(provider, model, sub, system, tools, settings, conversationId, finalAnswer = rounds >= MAX_TOOL_ROUNDS, echo = false)
-                    if (calls.isEmpty() || rounds >= MAX_TOOL_ROUNDS) break
+                    if (calls.isEmpty()) {
+                        val roundText = sub.roundText.toString()
+                        if (rounds < MAX_TOOL_ROUNDS && intentNudgesLeft > 0 && ranTools && UnfinishedIntentLogic.looksLikeUnfinishedIntent(roundText)) {
+                            intentNudgesLeft--
+                            sub.turns += ChatTurn.Assistant(roundText, emptyList())
+                            sub.turns += ChatTurn.User("You just said you'd do that — go ahead and call the tool for it now, instead of describing it again.")
+                            rounds++
+                            continue
+                        }
+                        break
+                    }
+                    if (rounds >= MAX_TOOL_ROUNDS) break
                     sub.turns += ChatTurn.Assistant(sub.roundText.toString(), calls)
                     ranTools = true
                     for (call in calls) sub.turns += runTool(call, tools, context, chat, labelPrefix = "↳ $who: ")
