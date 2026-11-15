@@ -41,9 +41,6 @@ private const val PANEL_OUTPUT_CHARS = 20_000
 // persists on the 3rd minute" the user asked for; an error a wait can never fix (a bad key, a missing model) skips this.
 private const val PROVIDER_ERROR_RETRIES = 2
 private const val PROVIDER_ERROR_WAIT_MS = 60_000L
-// A weaker model sometimes ends a reply on "let me do X" without calling the tool for X. Bounded separately from
-// the tool-round caps above so a model that keeps doing this can't burn the whole budget on empty promises.
-private const val UNFINISHED_INTENT_NUDGES = 2
 
 class SendMessageUseCase @Inject constructor(
     private val conversationRepository: ConversationRepository,
@@ -207,7 +204,6 @@ class SendMessageUseCase @Inject constructor(
             try {
                 var round = 0
                 var stopReason: String? = null
-                var intentNudgesLeft = UNFINISHED_INTENT_NUDGES
                 while (true) {
                     stopReason = when {
                         round >= MAX_TOOL_ROUNDS -> "You've used all $MAX_TOOL_ROUNDS tool rounds for this message."
@@ -236,10 +232,11 @@ class SendMessageUseCase @Inject constructor(
                     }
                     if (calls.isEmpty()) {
                         // A weaker model sometimes ends its turn on "let me do X" without ever calling the tool for
-                        // X. Give it a couple of chances to actually act before accepting that as the final answer.
+                        // X. Nudge it to actually act instead of accepting that as the final answer — a long job can
+                        // hit several distinct roadblocks in a row, each worth its own nudge, so this isn't capped on
+                        // its own; the round/time/output caps above are what bound it overall.
                         val roundText = attempt.roundText.toString()
-                        if (intentNudgesLeft > 0 && attempt.toolsRan && UnfinishedIntentLogic.looksLikeUnfinishedIntent(roundText)) {
-                            intentNudgesLeft--
+                        if (attempt.toolsRan && UnfinishedIntentLogic.looksLikeUnfinishedIntent(roundText)) {
                             attempt.turns += ChatTurn.Assistant(roundText, emptyList())
                             attempt.turns += ChatTurn.User("You just said you'd do that — go ahead and call the tool for it now, in this reply, instead of describing it again.")
                             round++
@@ -590,13 +587,11 @@ class SendMessageUseCase @Inject constructor(
             var ranTools = false
             try {
                 var rounds = 0
-                var intentNudgesLeft = UNFINISHED_INTENT_NUDGES
                 while (true) {
                     val calls = streamRoundRetrying(provider, model, sub, system, tools, settings, conversationId, finalAnswer = rounds >= MAX_TOOL_ROUNDS, echo = false)
                     if (calls.isEmpty()) {
                         val roundText = sub.roundText.toString()
-                        if (rounds < MAX_TOOL_ROUNDS && intentNudgesLeft > 0 && ranTools && UnfinishedIntentLogic.looksLikeUnfinishedIntent(roundText)) {
-                            intentNudgesLeft--
+                        if (rounds < MAX_TOOL_ROUNDS && ranTools && UnfinishedIntentLogic.looksLikeUnfinishedIntent(roundText)) {
                             sub.turns += ChatTurn.Assistant(roundText, emptyList())
                             sub.turns += ChatTurn.User("You just said you'd do that — go ahead and call the tool for it now, instead of describing it again.")
                             rounds++
