@@ -7,6 +7,7 @@ All builds are signed with the same key (certificate SHA-256 `714092cb7ef50ff620
 
 | Version | File | Source commit | SHA-256 |
 |---|---|---|---|
+| 1.9.2 | [HermesAgent-1.9.2-release.apk](HermesAgent-1.9.2-release.apk) | [edeaf87](https://github.com/smdc19812011/Hermes-Agent/commit/edeaf87a9c535e294d2b56751c926047bd7c81c6) | `f0175e7b576a6c03ba0775b73fd164c6ba136a22d2ab6f5896412bc1f6470f46` |
 | 1.9.1 | [HermesAgent-1.9.1-release.apk](HermesAgent-1.9.1-release.apk) | [03475de](https://github.com/smdc19812011/Hermes-Agent/commit/03475de1e92e3910438e13920bb7d754d9c640ad) | `9473cb2ea4df3880a642634eeb4da92a87818b3767eb2bec3ec105b251bdf737` |
 | 1.9.0 | [HermesAgent-1.9.0-release.apk](HermesAgent-1.9.0-release.apk) | [862267d](https://github.com/smdc19812011/Hermes-Agent/commit/862267dbbe1e06dfb927c2456a2c59f6a7ad603f) | `7a81f07b3f99656acdb27a6dbc5ef53578c62e7ae5fca6e6f81d0babf4d5f4f3` |
 | 1.8.0 | [HermesAgent-1.8.0-release.apk](HermesAgent-1.8.0-release.apk) | [df0134e](https://github.com/smdc19812011/Hermes-Agent/commit/df0134e24e6cc19c5da3a4530ca2d16d88cb6a64) | `07ec7e637a312622afab9d5cbb42d811a60ac3dbada2741553b98c5d78760145` |
